@@ -1,0 +1,6 @@
+wandb
+transformers
+packaging
+setuptools
+pkg_resources
+accelerate
