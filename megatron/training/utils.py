@@ -58,7 +58,7 @@ def unwrap_model(model, module_instances=ALL_MODULE_WRAPPER_CLASSNAMES):
         return unwrapped_model[0]
     return unwrapped_model
 
-
+@torch.no_grad()
 def calc_params_l2_norm(model):
     """Calculate l2 norm of parameters """
     args = get_args()
@@ -266,6 +266,14 @@ def print_rank_0(message):
     """If distributed is initialized, print only on rank 0."""
     if torch.distributed.is_initialized():
         if torch.distributed.get_rank() == 0:
+            print(message, flush=True)
+    else:
+        print(message, flush=True)
+
+def print_local_0(message):
+    """Print only on rank 0 of the local group."""
+    if torch.distributed.is_initialized():
+        if os.getenv('LOCAL_RANK', '0') == '0':
             print(message, flush=True)
     else:
         print(message, flush=True)

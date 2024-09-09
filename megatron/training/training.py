@@ -635,7 +635,31 @@ def setup_model_and_optimizer(model_provider_func,
 
     return model, optimizer, opt_param_scheduler
 
+def get_grad_norms(model, norm_type=2.0):
+    """
+    Print the gradient norms of all layers in a decoder model.
+    
+    Args:
+    model (nn.Module): The model to analyze
+    norm_type (float): Type of the used p-norm. Can be 'inf' for infinity norm.
+    """
+    grad_norms = {}
+    
+    for name, param in model.named_parameters():
+        if param.main_grad is not None:
+            # Compute the norm
+            param_norm = param.main_grad.data.norm(norm_type)
+            
+            # Extract the layer name (assuming format like 'decoder.layer.0.attention')
+            layer_name = "grad_norm/" + '.'.join(name.split('.')[:6])  # Adjust this based on your model's naming convention
+            
+            # Accumulate the norm for each layer
+            if layer_name not in grad_norms:
+                grad_norms[layer_name] = param_norm.item()
+            else:
+                grad_norms[layer_name] += param_norm.item()
 
+    return grad_norms
 
 def train_step(forward_step_func, data_iterator,
                model, optimizer, opt_param_scheduler, config):
@@ -659,6 +683,8 @@ def train_step(forward_step_func, data_iterator,
         micro_batch_size=args.micro_batch_size,
         decoder_seq_length=args.decoder_seq_length,
         forward_only=False)
+    
+    grad_norms = get_grad_norms(model[0])
 
     # Empty unused memory.
     if args.empty_unused_memory_level >= 1:
@@ -712,13 +738,13 @@ def train_step(forward_step_func, data_iterator,
                     numerator += val
                     denominator += 1
             loss_reduced[key] = numerator / denominator
-        return loss_reduced, skipped_iter, grad_norm, num_zeros_in_grad
-    return {}, skipped_iter, grad_norm, num_zeros_in_grad
+        return loss_reduced, skipped_iter, grad_norm, num_zeros_in_grad, grad_norms
+    return {}, skipped_iter, grad_norm, num_zeros_in_grad, grad_norms
 
 
 def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_rate, iteration,
                  loss_scale, report_memory_flag, skipped_iter,
-                 grad_norm, params_norm, num_zeros_in_grad):
+                 grad_norm, params_norm, num_zeros_in_grad, grad_norms):
     """Log training information such as losses, timing, ...."""
     args = get_args()
     timers = get_timers()
@@ -854,6 +880,7 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
                               args.consumed_train_samples)
             if wandb_writer:
                 wandb_writer.log({'params-norm': params_norm}, iteration)
+                wandb_writer.log(grad_norms, iteration)
         if args.log_memory_to_tensorboard:
             mem_stats = torch.cuda.memory_stats()
             writer.add_scalar(
@@ -941,6 +968,7 @@ def training_log(loss_dict, total_loss_dict, learning_rate, decoupled_learning_r
         total_loss_dict[skipped_iters_key] = 0
         total_loss_dict[nan_iters_key] = 0
         print_rank_last(log_string)
+        print_rank_last(f"grad_norms: {grad_norms}")
         if report_memory_flag and learning_rate > 0.:
             # Report memory after optimizer state has been initialized.
             if torch.distributed.get_rank() == 0:
@@ -1044,6 +1072,12 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
     # Turn on training mode which enables dropout.
     for model_module in model:
         model_module.train()
+
+    print_rank_0('training...')
+    print_rank_0(model[0])
+
+    for name, param in model[0].named_parameters():
+        print_rank_0(name)
 
     # Tracking loss.
     total_loss_dict = {}
@@ -1155,7 +1189,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         update_num_microbatches(args.consumed_train_samples, consistency_check=True, verbose=True)
 
         args.curr_iteration = iteration
-        loss_dict, skipped_iter, grad_norm, num_zeros_in_grad = \
+        loss_dict, skipped_iter, grad_norm, num_zeros_in_grad, grad_norms = \
             train_step(forward_step_func,
                        train_data_iterator,
                        model,
@@ -1218,7 +1252,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
                                           decoupled_learning_rate,
                                           iteration, loss_scale,
                                           report_memory_flag, skipped_iter,
-                                          grad_norm, params_norm, num_zeros_in_grad)
+                                          grad_norm, params_norm, num_zeros_in_grad, grad_norms)
 
         # StragglerDetector
         if iteration % args.log_interval == 0 and args.log_straggler:
