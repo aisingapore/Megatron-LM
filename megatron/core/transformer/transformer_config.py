@@ -113,7 +113,7 @@ class TransformerConfig(ModelParallelConfig):
 
     post_mlp_layernorm: bool = False
 
-    alternating_window_size:int = None
+    alternating_window_size:bool = True
 
     ####################
     # initialization
