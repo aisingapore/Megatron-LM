@@ -4,6 +4,7 @@ from collections import OrderedDict
 from typing import Dict, Literal, Optional
 
 from torch import Tensor
+import torch
 
 from megatron.core import InferenceParams, tensor_parallel
 from megatron.core.config_logger import has_config_logger_enabled, log_config_to_disk
@@ -85,6 +86,7 @@ class GPTModel(LanguageModule):
         self.parallel_output = parallel_output
         self.share_embeddings_and_output_weights = share_embeddings_and_output_weights
         self.position_embedding_type = position_embedding_type
+        self.final_logit_softcapping = config.final_logit_softcapping
 
         # megatron core pipelining currently depends on model type
         # TODO: remove this dependency ?
@@ -231,6 +233,11 @@ class GPTModel(LanguageModule):
         if self.share_embeddings_and_output_weights:
             output_weight = self.shared_embedding_or_output_weight()
         logits, _ = self.output_layer(hidden_states, weight=output_weight)
+
+        if self.final_logit_softcapping:
+            logits = logits / self.config.final_logit_softcapping
+            logits = torch.tanh(logits)
+            logits = logits * self.config.final_logit_softcapping
 
         if has_config_logger_enabled(self.config):
             payload = OrderedDict(
