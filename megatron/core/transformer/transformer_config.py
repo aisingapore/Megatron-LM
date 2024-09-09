@@ -103,6 +103,19 @@ class TransformerConfig(ModelParallelConfig):
     global batch, versus the default behavior of assuming all tokens are non-padded."""
 
     ####################
+    # gemma2 specific
+    ####################
+    attn_logit_softcapping: float = None
+
+    final_logit_softcapping: float = None
+
+    gemma_post_attn_ln: bool = False
+
+    post_mlp_layernorm: bool = False
+
+    alternating_window_size:int = None
+
+    ####################
     # initialization
     ####################
     init_method: Callable = None

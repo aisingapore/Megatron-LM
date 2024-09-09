@@ -677,6 +677,13 @@ def core_transformer_config_from_args(args, config_class=None):
         kw_args['num_query_groups'] = None
     kw_args['config_logger_dir'] = args.config_logger_dir
 
+    # from gemma                
+    kw_args['attn_logit_softcapping'] = args.attn_logit_softcapping
+    kw_args['final_logit_softcapping'] = args.final_logit_softcapping
+    kw_args['gemma_post_attn_ln'] = args.gemma_post_attention_layernorm
+    kw_args['post_mlp_layernorm'] = args.post_mlp_layernorm
+    kw_args['alternating_window_size'] = args.alternating_window_size
+
     # Return config.
     return config_class(**kw_args)
 
@@ -860,6 +867,17 @@ def _add_network_size_args(parser):
                        dest='bert_binary_head')
     group.add_argument('--untie-embeddings-and-output-weights', action='store_true',
                        help='Untie embeddings and output weights.'),
+    # from gemma2
+    group.add_argument('--attn-logit-softcapping', type=float, default=None,
+                       help='Softcap for attention scores.')
+    group.add_argument('--final-logit-softcapping', type=float, default=None,
+                       help='Softcap for logits.')
+    group.add_argument('--gemma-post-attention-layernorm', action='store_true',
+                       help="Gemma2 layernorm after attention, before adding residual.")
+    group.add_argument('--alternating-window-size', type=int, default=None,
+                        help='Alternating window size for alternating attention.')
+    group.add_argument('--post-mlp-layernorm', action='store_true',
+                       help='Gemma2 layernorm after MLP, before adding residual.')
     return parser
 
 
