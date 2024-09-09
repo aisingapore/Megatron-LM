@@ -44,9 +44,7 @@ except ImportError:
 
 
 def get_gpt_layer_with_transformer_engine_spec(
-    num_experts: Optional[int] = None,
-    moe_grouped_gemm: Optional[bool] = False,
-    qk_layernorm: Optional[bool] = False,
+    args,
 ) -> ModuleSpec:
     """Use this spec to use lower-level Transformer Engine modules (required for fp8 training).
 
@@ -59,8 +57,9 @@ def get_gpt_layer_with_transformer_engine_spec(
     Returns:
         ModuleSpec: Module specification with TE modules
     """
+
     mlp = _get_mlp_module_spec(
-        use_te=True, num_experts=num_experts, moe_grouped_gemm=moe_grouped_gemm
+        use_te=True, num_experts=args.num_experts, moe_grouped_gemm=args.moe_grouped_gemm
     )
     return ModuleSpec(
         module=TransformerLayer,
@@ -74,12 +73,12 @@ def get_gpt_layer_with_transformer_engine_spec(
                     linear_proj=TERowParallelLinear,
                     # TENorm significantly harms convergence when used
                     # for QKLayerNorm; we instead use the Apex implementation.
-                    q_layernorm=FusedLayerNorm if qk_layernorm else IdentityOp,
-                    k_layernorm=FusedLayerNorm if qk_layernorm else IdentityOp,
+                    q_layernorm=FusedLayerNorm if args.qk_layernorm else IdentityOp,
+                    k_layernorm=FusedLayerNorm if args.qk_layernorm else IdentityOp,
                 ),
             ),
             self_attn_bda=get_bias_dropout_add,
-            pre_mlp_layernorm=TENorm if num_experts else IdentityOp,
+            pre_mlp_layernorm=TENorm if args.num_experts or args.pre_feedforward_layernorm else IdentityOp,
             mlp=mlp,
             mlp_bda=get_bias_dropout_add,
         ),
