@@ -106,14 +106,22 @@ class TransformerConfig(ModelParallelConfig):
     # gemma2 specific
     ####################
     attn_logit_softcapping: float = None
+    """Softcapping value for the attention logits."""
 
     final_logit_softcapping: float = None
+    """Softcapping value for the final logit."""
 
-    gemma_post_attn_ln: bool = False
+    gemma_post_attention_layernorm: bool = False
+    """If True, apply layer norm after the attention layer, before the MLP layer."""
 
     post_mlp_layernorm: bool = False
+    """If True, apply layer norm after the MLP layer."""
 
     alternating_window_size:bool = True
+    """If True, use alternating window size for sliding window attention."""
+
+    query_pre_attn_scalar: float = None
+    """Gemma's query scalar for pre-attention."""
 
     ####################
     # initialization

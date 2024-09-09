@@ -678,10 +678,6 @@ def core_transformer_config_from_args(args, config_class=None):
     kw_args['config_logger_dir'] = args.config_logger_dir
 
     # from gemma                
-    kw_args['attn_logit_softcapping'] = args.attn_logit_softcapping
-    kw_args['final_logit_softcapping'] = args.final_logit_softcapping
-    kw_args['gemma_post_attn_ln'] = args.gemma_post_attention_layernorm
-    kw_args['post_mlp_layernorm'] = args.post_mlp_layernorm
     kw_args['alternating_window_size'] = args.use_alternating_window_size
 
     # Return config.
@@ -879,6 +875,8 @@ def _add_network_size_args(parser):
                         help='Use alternating window size for alternating attention.')
     group.add_argument('--post-mlp-layernorm', action='store_true',
                        help='Gemma2 layernorm after MLP, before adding residual.')
+    group.add_argument('--query-pre-attn-scalar', type=float, default=None,
+                       help='Scalar for query before attention. Gemma2-9b uses 256, 27b uses 144')
     return parser
 
 
