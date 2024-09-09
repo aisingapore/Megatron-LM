@@ -481,7 +481,18 @@ class TEDotProductAttention(te.pytorch.DotProductAttention):
                 f"Transformer-Engine version ({str(_te_version)}) must be >= 1.2.0 to support"
                 "sliding window attention."
             )
-            extra_kwargs['window_size'] = config.window_size
+            if config.alternating_window_size:
+                extra_kwargs['window_size'] = config.window_size if not bool(layer_number % 2) else None
+
+            else:
+                extra_kwargs['window_size'] = config.window_size
+
+        if config.query_pre_attn_scalar is not None:
+            extra_kwargs['softmax_scale'] = config.query_pre_attn_scalar ** -0.5
+
+        if config.attn_logit_softcapping is not None:
+            extra_kwargs['softcap'] = config.attn_logit_softcapping
+
 
         super().__init__(
             num_attention_heads=self.config.num_attention_heads,
