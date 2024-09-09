@@ -20,6 +20,7 @@ from megatron.core.utils import make_viewless_tensor
 class TransformerLayerSubmodules:
     input_layernorm: Union[ModuleSpec, type] = IdentityOp
     self_attention: Union[ModuleSpec, type] = IdentityOp
+    post_self_attn_layernorm: Union[ModuleSpec, type] = IdentityOp
     self_attn_bda: Union[ModuleSpec, type] = IdentityFuncOp
 
     pre_cross_attn_layernorm: Union[ModuleSpec, type] = IdentityOp
@@ -28,6 +29,7 @@ class TransformerLayerSubmodules:
 
     pre_mlp_layernorm: Union[ModuleSpec, type] = IdentityOp
     mlp: Union[ModuleSpec, type] = IdentityOp
+    post_mlp_layernorm:  Union[ModuleSpec, type] = IdentityOp
     mlp_bda: Union[ModuleSpec, type] = IdentityFuncOp
 
     # Mapping for sharded tensor keys to be applied in `sharded_state_dict` method
@@ -84,6 +86,14 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
             submodules.self_attention, config=self.config, layer_number=layer_number
         )
 
+        # [Module 2.5 : Post SelfAttention] Optional Layernorm after self-attn
+        self.post_self_attn_layernorm = build_module(
+            submodules.post_self_attn_layernorm,
+            config=self.config,
+            hidden_size=self.config.hidden_size,
+            eps=self.config.layernorm_epsilon,
+        )
+
         # [Module 3: BiasDropoutFusion]
         self.self_attn_bda = build_module(submodules.self_attn_bda)
 
@@ -117,6 +127,15 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
         self.mlp = build_module(submodules.mlp, config=self.config)
         if hasattr(self.mlp, 'set_layer_number'):
             self.mlp.set_layer_number(self.layer_number)
+
+        # [Module 8.5: Post MLP] Optional Layernorm after MLP
+
+        self.post_mlp_layernorm = build_module(
+            submodules.post_mlp_layernorm,
+            config=self.config,
+            hidden_size=self.config.hidden_size,
+            eps=self.config.layernorm_epsilon,
+        )
 
         # [Module 9: BiasDropoutFusion]
         self.mlp_bda = build_module(submodules.mlp_bda)
@@ -182,8 +201,13 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
             packed_seq_params=packed_seq_params,
         )
 
+        # Self attention layernorm # gemma 2
+        # for backward compatibility, even though bias is not used
+        attention_output_with_bias[0] = self.post_self_attn_layernorm(attention_output_with_bias[0])
+
         # TODO: could we move `bias_dropout_add_exec_handler` itself
         # inside the module provided in the `bias_dropout_add_spec` module?
+        # this does dropout(bias + x) + residual
         with self.bias_dropout_add_exec_handler():
             hidden_states = self.self_attn_bda(self.training, self.config.bias_dropout_fusion)(
                 attention_output_with_bias, residual, self.hidden_dropout
@@ -221,6 +245,10 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
 
         # MLP.
         mlp_output_with_bias = self.mlp(pre_mlp_layernorm_output)
+
+        # Optional Post MLP Layer norm
+
+        mlp_output_with_bias[0] = self.post_mlp_layernorm(mlp_output_with_bias[0])
 
         # TODO: could we move `bias_dropout_add_exec_handler` itself
         # inside the module provided in the `bias_dropout_add_spec` module?

@@ -77,9 +77,11 @@ def get_gpt_layer_with_transformer_engine_spec(
                     k_layernorm=FusedLayerNorm if args.qk_layernorm else IdentityOp,
                 ),
             ),
+            post_self_attn_layernorm = TENorm if args.gemma_post_attention_layernorm else IdentityOp,
             self_attn_bda=get_bias_dropout_add,
-            pre_mlp_layernorm=TENorm if args.num_experts or args.pre_feedforward_layernorm else IdentityOp,
+            pre_mlp_layernorm=TENorm if args.num_experts else IdentityOp,
             mlp=mlp,
+            post_mlp_layernorm=TENorm if args.post_mlp_layernorm else IdentityOp,
             mlp_bda=get_bias_dropout_add,
         ),
     )
