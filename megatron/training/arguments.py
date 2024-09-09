@@ -517,6 +517,13 @@ def validate_args(args, defaults={}):
     if not args.add_bias_linear:
         args.bias_gelu_fusion = False
 
+    # gemma checks for post attn layernorm
+    if args.add_bias_linear:
+        assert not args.gemma_post_attention_layernorm,(
+        "Post attention layernorm is not supported with bias linear, "
+        "pass in `--disable-bias-linear ` to disable bias."
+        )
+
     # Retro checks.
     if args.retro_add_retriever:
 
