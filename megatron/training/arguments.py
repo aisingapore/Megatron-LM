@@ -603,6 +603,10 @@ def validate_args(args, defaults={}):
     if args.apply_query_key_layer_scaling:
         args.attention_softmax_in_fp32 = True
 
+    if args.window_size:
+        if isinstance(args.window_size, int):
+            args.window_size = (args.window_size, args.window_size)
+
     # Checkpointing
     if args.ckpt_fully_parallel_save_deprecated and args.rank == 0:
         print('--ckpt-fully-parallel-save flag is deprecated and has no effect.'
@@ -683,8 +687,7 @@ def core_transformer_config_from_args(args, config_class=None):
     else:
         kw_args['num_query_groups'] = None
     kw_args['config_logger_dir'] = args.config_logger_dir
-
-    # from gemma                
+   
     kw_args['alternating_window_size'] = args.use_alternating_window_size
 
     # Return config.
