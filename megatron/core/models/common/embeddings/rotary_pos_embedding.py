@@ -77,7 +77,7 @@ class RotaryEmbedding(nn.Module):
         self.inv_freq = 1.0 / (
             rotary_base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / dim)
         )
-
+    @torch.no_grad()
     def forward(self, max_seq_len: int, offset: int = 0) -> Tensor:
         """Forward pass of RoPE embedding.
 
