@@ -196,7 +196,6 @@ class GPTModel(LanguageModule):
         """
         # If decoder_input is provided (not None), then input_ids and position_ids are ignored.
         # Otherwise, apply embedding layer on input_ids and position_ids to get decoder_input.
-
         # Decoder embedding.
         if decoder_input is not None:
             pass
@@ -207,6 +206,11 @@ class GPTModel(LanguageModule):
             # decoder will get hidden_states from encoder.input_tensor
             decoder_input = None
 
+        states = {
+            "input_ids" : input_ids.detach(),
+            "decoder_input" : decoder_input,
+        }
+
         # Rotary positional embeddings (embedding is None for PP intermediate devices)
         rotary_pos_emb = None
         if self.position_embedding_type == 'rope':
@@ -214,6 +218,10 @@ class GPTModel(LanguageModule):
                 inference_params, self.decoder, decoder_input, self.config
             )
             rotary_pos_emb = self.rotary_pos_emb(rotary_seq_len)
+
+        # for testing, remove
+        # normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=decoder_input.dtype)
+        # decoder_input = decoder_input * normalizer
 
         # Run decoder.
         hidden_states = self.decoder(
@@ -234,11 +242,14 @@ class GPTModel(LanguageModule):
             output_weight = self.shared_embedding_or_output_weight()
         logits, _ = self.output_layer(hidden_states, weight=output_weight)
 
+        states['final_logits'] = logits.detach()
+
         if self.final_logit_softcapping:
             logits = logits / self.config.final_logit_softcapping
             logits = torch.tanh(logits)
             logits = logits * self.config.final_logit_softcapping
 
+        states['logits_post_softcap'] = logits.detach()
         if has_config_logger_enabled(self.config):
             payload = OrderedDict(
                 {
@@ -250,7 +261,8 @@ class GPTModel(LanguageModule):
                 }
             )
             log_config_to_disk(self.config, payload, prefix='input_and_logits')
-
+        
+        torch.save(states, "outer.pt")
         if labels is None:
             # [s b h] => [b s h]
             return logits.transpose(0, 1).contiguous()

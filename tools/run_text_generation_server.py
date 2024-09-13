@@ -67,10 +67,10 @@ def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megat
             transformer_layer_spec = import_module(args.spec)
         else:
             if use_te:
-                transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(args.num_experts, args.moe_grouped_gemm, args.qk_layernorm)
+                transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(args)
             else:
                 transformer_layer_spec = get_gpt_layer_local_spec(args.num_experts, args.moe_grouped_gemm, args.qk_layernorm)
-
+        print(f"{config=}")
         model = GPTModel(
             config=config,
             transformer_layer_spec=transformer_layer_spec,
@@ -122,6 +122,10 @@ if __name__ == "__main__":
 
     assert len(model) == 1, "Above condition should have caught this"
     model = model[0]
+
+    print(model)
+    for name, param in model.named_parameters():
+        print(name, param.shape)
     if mpu.is_pipeline_first_stage() and mpu.get_tensor_model_parallel_rank() == 0:
         server = MegatronServer(model)
         server.run("0.0.0.0",port=args.port)

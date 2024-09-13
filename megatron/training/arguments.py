@@ -670,6 +670,7 @@ def core_transformer_config_from_args(args, config_class=None):
     kw_args['batch_p2p_comm'] = not args.overlap_p2p_comm
     kw_args['num_moe_experts'] = args.num_experts
     kw_args['rotary_interleaved'] = args.rotary_interleaved
+    kw_args['gated_linear_unit'] = args.gated_linear_unit
     if args.swiglu:
         kw_args['activation_func'] = F.silu
         kw_args['gated_linear_unit'] = True
@@ -806,7 +807,7 @@ def _add_network_size_args(parser):
     group.add_argument('--decoder-num-layers', type=int, default=None,
                        help='Number of decoder transformer layers.')
     group.add_argument('--hidden-size', type=int, default=None,
-                       help='Tansformer hidden size.')
+                       help='Transformer hidden size.')
     group.add_argument('--ffn-hidden-size', type=int, default=None,
                        help='Transformer Feed-Forward Network hidden size. '
                        'This is set to 4*hidden-size if not provided')
@@ -887,6 +888,8 @@ def _add_network_size_args(parser):
                        help='Gemma2 layernorm after MLP, before adding residual.')
     group.add_argument('--query-pre-attn-scalar', type=float, default=None,
                        help='Scalar for query before attention. Gemma2-9b uses 256, 27b uses 144')
+    group.add_argument('--gated-linear-unit', action = 'store_true',
+                        help= "Monkey patch to force GLU")
     return parser
 
 
@@ -1025,9 +1028,9 @@ def _add_logging_args(parser):
 def _add_regularization_args(parser):
     group = parser.add_argument_group(title='regularization')
 
-    group.add_argument('--attention-dropout', type=float, default=0.1,
+    group.add_argument('--attention-dropout', type=float, default=0.0,
                        help='Post attention dropout probability.')
-    group.add_argument('--hidden-dropout', type=float, default=0.1,
+    group.add_argument('--hidden-dropout', type=float, default=0.0,
                        help='Dropout probability for hidden state transformer.')
     group.add_argument('--weight-decay', type=float, default=0.01,
                        help='Weight decay coefficient for L2 regularization.')

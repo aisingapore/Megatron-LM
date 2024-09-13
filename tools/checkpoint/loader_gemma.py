@@ -126,7 +126,6 @@ def set_attn_state(args, layer, hf_layer):
         hf_attn.k_proj.weight.reshape((ng, dim, -1)),
         hf_attn.v_proj.weight.reshape((ng, dim, -1)),
     ], dim=1).reshape((-1, args.hidden_size))
-    print(fused.shape)
     attn.linear_qkv.weight.data.copy_(fused)
     attn.linear_proj.weight.data.copy_(hf_attn.o_proj.weight)
 
@@ -319,8 +318,14 @@ def _load_checkpoint(queue, args):
     md.checkpoint_args = margs
     md.consumed_train_samples = 0
     md.consumed_valid_samples = 0
+    md.gated_linear_unit = margs.gated_linear_unit
+    md.final_logit_softcapping = margs.final_logit_softcapping
+    md.attn_logit_softcapping = margs.attn_logit_softcapping
+    md.rotary_base = margs.rotary_base
+    md.window_size = margs.window_size
+    md.query_pre_attn_scalar = margs.query_pre_attn_scalar
+    md.kv_channels = margs.kv_channels
 
-    margs.model_size = args.model_size
 
     # Get true (non-padded) vocab size
     tokenizer = transformers.AutoTokenizer.from_pretrained(margs.tokenizer_model)
@@ -373,7 +378,7 @@ def _load_checkpoint(queue, args):
         mlp_l1_weight.append(layer.mlp.linear_fc2.weight.data)
 
         # Handle gated linear units.
-        if md.swiglu:
+        if md.swiglu or md.gated_linear_unit:
             # Concat all the first halves ('W's) and all the second halves ('V's).
             for tp_rank in range(tp_size):
                 mlp_l0_weight[tp_rank] = torch.chunk(mlp_l0_weight[tp_rank], 2, dim=0)

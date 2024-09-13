@@ -598,7 +598,7 @@ def save_checkpoint(queue, args):
                 router = msg.pop("router weight")
 
             # Special handling for swiglu
-            if md.swiglu:
+            if md.swiglu or md.gated_linear_unit:
                 mlp_l0_weight_W = chunk_weight(msg.pop("mlp l0 weight W"), "column", args.target_tensor_parallel_size, args.target_expert_parallel_size)
                 mlp_l0_weight_V = chunk_weight(msg.pop("mlp l0 weight V"), "column", args.target_tensor_parallel_size, args.target_expert_parallel_size)
                 mlp_l0_weight = torch.cat((mlp_l0_weight_W, mlp_l0_weight_V), dim=-2)
