@@ -87,6 +87,8 @@ def load_args_from_checkpoint(args):
     args.query_pre_attn_scalar = model_args['query_pre_attn_scalar']
     args.kv_channels = model_args['head_dim']
     args.gated_linear_unit = True
+    args.apply_layernorm_1p = True
+    
 
     if "num_key_value_heads" in model_args:
         args.group_query_attention = True
@@ -118,15 +120,26 @@ def set_attn_state(args, layer, hf_layer):
     ng = (args.num_query_groups if args.group_query_attention \
         else args.num_attention_heads) // tp
     dim = args.kv_channels
+    hidden_size = args.hidden_size
+    heads_per_group = nh // ng
     assert nh % ng == 0
 
+    q_weight = hf_attn.q_proj.weight
+    k_weight = hf_attn.k_proj.weight
+    v_weight = hf_attn.v_proj.weight
+
+    q_weight = q_weight.reshape(nh, dim, hidden_size)
+    k_weight = k_weight.reshape(ng, dim, hidden_size)
+    v_weight = v_weight.reshape(ng, dim, hidden_size)
+
     # Copy weights (re-order dimensions for Megatron).
-    fused = torch.cat([
-        hf_attn.q_proj.weight.reshape((ng, dim*nh//ng, -1)),
-        hf_attn.k_proj.weight.reshape((ng, dim, -1)),
-        hf_attn.v_proj.weight.reshape((ng, dim, -1)),
-    ], dim=1).reshape((-1, args.hidden_size))
-    attn.linear_qkv.weight.data.copy_(fused)
+    qkv_weight = torch.empty((0, dim, hidden_size))
+    for i in range(ng):
+        qkv_weight = torch.cat((qkv_weight, q_weight[i * heads_per_group : (i + 1) * heads_per_group, :, :]))
+        qkv_weight = torch.cat((qkv_weight, k_weight[i : i + 1, :, :]))
+        qkv_weight = torch.cat((qkv_weight, v_weight[i : i + 1, :, :]))
+    qkv_weight = qkv_weight.reshape([dim * (nh+ 2 * ng), hidden_size])
+    attn.linear_qkv.weight.data.copy_(qkv_weight)
     attn.linear_proj.weight.data.copy_(hf_attn.o_proj.weight)
 
 
@@ -325,6 +338,8 @@ def _load_checkpoint(queue, args):
     md.window_size = margs.window_size
     md.query_pre_attn_scalar = margs.query_pre_attn_scalar
     md.kv_channels = margs.kv_channels
+    md.layernorm_zero_centered_gamma = True
+    md.apply_layernorm_1p = margs.apply_layernorm_1p
 
 
     # Get true (non-padded) vocab size

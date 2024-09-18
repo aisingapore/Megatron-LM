@@ -89,7 +89,9 @@ def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megat
             rotary_percent=args.rotary_percent,
             rotary_base=args.rotary_base
         )
-
+    print_rank_0(model)
+    for name, param in model.named_parameters():
+        print_rank_0(f"{name}: {param.size()}")
     return model
 
 

@@ -218,10 +218,9 @@ class GPTModel(LanguageModule):
                 inference_params, self.decoder, decoder_input, self.config
             )
             rotary_pos_emb = self.rotary_pos_emb(rotary_seq_len)
-
-        # for testing, remove
-        # normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=decoder_input.dtype)
-        # decoder_input = decoder_input * normalizer
+        
+        normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=decoder_input.dtype)
+        decoder_input = decoder_input * normalizer
 
         # Run decoder.
         hidden_states = self.decoder(

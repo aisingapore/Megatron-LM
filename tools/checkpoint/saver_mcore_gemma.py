@@ -399,7 +399,7 @@ def save_checkpoint(queue, args):
                         'encoder_num_layers', 'encoder_seq_length',
                         'distribute_saved_activations',
                         'train_iters', 'lr_decay_iters', 'lr_warmup_iters', 'lr_warmup_fraction',
-                        'start_weight_decay', 'end_weight_decay',
+                        'start_weight_decay', 'end_weight_decay', 'layernorm_zero_centered_gamma',
                         'ckpt_format',
         ]
 
@@ -604,17 +604,6 @@ def save_checkpoint(queue, args):
                 mlp_l0_weight = torch.cat((mlp_l0_weight_W, mlp_l0_weight_V), dim=-2)
             else:
                 mlp_l0_weight = chunk_weight(msg.pop("mlp l0 weight"), "column", args.target_tensor_parallel_size, args.target_expert_parallel_size)
-
-            if md.linear_bias:
-                dense_bias = msg.pop("dense bias")
-                mlp_l1_bias = chunk_bias(msg.pop("mlp l1 bias"), 'row', args.target_tensor_parallel_size, args.target_expert_parallel_size)
-                qkv_bias = chunk_bias(msg.pop("qkv bias"), 'column', args.target_tensor_parallel_size)
-                if md.swiglu:
-                    mlp_l0_bias_W = chunk_bias(msg.pop("mlp l0 bias W"), 'column', args.target_tensor_parallel_size, args.target_expert_parallel_size)
-                    mlp_l0_bias_V = chunk_bias(msg.pop("mlp l0 bias V"), 'column', args.target_tensor_parallel_size, args.target_expert_parallel_size)
-                    mlp_l0_bias = torch.cat((mlp_l0_bias_W, mlp_l0_bias_V), dim=-1)
-                else:
-                    mlp_l0_bias = chunk_bias(msg.pop("mlp l0 bias"), 'column', args.target_tensor_parallel_size, args.target_expert_parallel_size)
 
             # Save them to the model
             for ep_rank in range(args.target_expert_parallel_size):

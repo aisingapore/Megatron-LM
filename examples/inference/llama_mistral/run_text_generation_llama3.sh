@@ -3,23 +3,26 @@
 export NCCL_IB_SL=1
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export NVTE_APPLY_QK_LAYER_SCALING=0
+unset USE_TCPX
+unset NCCL_NET
 
-DISTRIBUTED_ARGS="--nproc_per_node 2 \
+
+DISTRIBUTED_ARGS="--nproc_per_node 1 \
                   --nnodes 1 \
                   --node_rank 0 \
                   --master_addr 0.0.0.0 \
                   --master_port 6000"
 
 # Ensure CHECKPOINT and TOKENIZER_MODEL are provided
-if [ -z "$1" ] || [ -z "$2" ]; then
-  echo "Error: You must provide CHECKPOINT and TOKENIZER_MODEL as command-line arguments."
-  echo "Usage: $0 /path/to/checkpoint /path/to/tokenizer_model"
-  exit 1
-fi
+# if [ -z "$1" ] || [ -z "$2" ]; then
+#   echo "Error: You must provide CHECKPOINT and TOKENIZER_MODEL as command-line arguments."
+#   echo "Usage: $0 /path/to/checkpoint /path/to/tokenizer_model"
+#   exit 1
+# fi
 
 # Assign command-line arguments to variables
-CHECKPOINT=$1
-TOKENIZER_MODEL=$2
+CHECKPOINT=/shared/aisingapore/checkpoints/megatron/megatron-llama3-8B-PP1-TP1-mcore
+TOKENIZER_MODEL=/shared/aisingapore/users/wayne/models/Meta-Llama-3-8B
 
 pip install flask-restful
 
