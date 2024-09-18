@@ -1,7 +1,6 @@
 import argparse
 import glob
 import json
-import re
 
 from evaluate_vqav2 import compute_vqa_accuracy
 
