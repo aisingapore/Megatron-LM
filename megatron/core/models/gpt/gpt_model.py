@@ -201,15 +201,12 @@ class GPTModel(LanguageModule):
             pass
         elif self.pre_process:
             decoder_input = self.embedding(input_ids=input_ids, position_ids=position_ids)
+            normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=decoder_input.dtype)
+            decoder_input = decoder_input * normalizer
         else:
             # intermediate stage of pipeline
             # decoder will get hidden_states from encoder.input_tensor
             decoder_input = None
-
-        states = {
-            "input_ids" : input_ids.detach(),
-            "decoder_input" : decoder_input,
-        }
 
         # Rotary positional embeddings (embedding is None for PP intermediate devices)
         rotary_pos_emb = None
@@ -219,9 +216,7 @@ class GPTModel(LanguageModule):
             )
             rotary_pos_emb = self.rotary_pos_emb(rotary_seq_len)
         
-        normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=decoder_input.dtype)
-        decoder_input = decoder_input * normalizer
-
+        
         # Run decoder.
         hidden_states = self.decoder(
             hidden_states=decoder_input,
@@ -241,14 +236,10 @@ class GPTModel(LanguageModule):
             output_weight = self.shared_embedding_or_output_weight()
         logits, _ = self.output_layer(hidden_states, weight=output_weight)
 
-        states['final_logits'] = logits.detach()
-
         if self.final_logit_softcapping:
             logits = logits / self.config.final_logit_softcapping
             logits = torch.tanh(logits)
             logits = logits * self.config.final_logit_softcapping
-
-        states['logits_post_softcap'] = logits.detach()
         if has_config_logger_enabled(self.config):
             payload = OrderedDict(
                 {
@@ -260,8 +251,6 @@ class GPTModel(LanguageModule):
                 }
             )
             log_config_to_disk(self.config, payload, prefix='input_and_logits')
-        
-        torch.save(states, "outer.pt")
         if labels is None:
             # [s b h] => [b s h]
             return logits.transpose(0, 1).contiguous()

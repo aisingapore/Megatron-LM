@@ -283,15 +283,6 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
                 otherwise None.
         """
 
-        saved_states = {
-        'initial': hidden_states.detach(),
-        'attention_mask' : attention_mask.detach(),
-        'context' : context,
-        'context_mask' : context_mask,
-        'rotary_pos_emb' : rotary_pos_emb,
-        'inference_params' : inference_params,
-        'packed_seq_params' : packed_seq_params,
-        }
 
         # Residual connection.
         residual = hidden_states
@@ -299,10 +290,7 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
         # Optional Input Layer norm
         input_layernorm_output = self.input_layernorm(hidden_states)
 
-        saved_states['input_layernorm'] = input_layernorm_output
         # Self attention.
-        saved_states['linear_norm'] = self.self_attention.linear_qkv.layer_norm_weight
-        saved_states['linear_qkv'] = self.self_attention.linear_qkv.weight
         attention_output_with_bias = self.self_attention(
             input_layernorm_output,
             attention_mask=attention_mask,
@@ -310,14 +298,11 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
             rotary_pos_emb=rotary_pos_emb,
             packed_seq_params=packed_seq_params,
         )
-
-        saved_states['post_attention'] = attention_output_with_bias[0].detach()
         # Self attention layernorm # gemma 2
         # for backward compatibility, even though bias is not used
         attention_output = self.post_self_attn_layernorm(attention_output_with_bias[0])
         attention_output_with_bias = (attention_output, attention_output_with_bias[1])
         
-        saved_states['post_attention_norm'] = attention_output.detach()
         # TODO: could we move `bias_dropout_add_exec_handler` itself
         # inside the module provided in the `bias_dropout_add_spec` module?
         # this does dropout(bias + x) + residual
@@ -356,7 +341,6 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
         # Optional Layer norm post the cross-attention.
         pre_mlp_layernorm_output = self.pre_mlp_layernorm(hidden_states)
 
-        saved_states['pre_mlp_layernorm'] = pre_mlp_layernorm_output
 
         # MLP.
         mlp_output_with_bias = self.mlp(pre_mlp_layernorm_output)
@@ -366,7 +350,6 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
         mlp_output = self.post_mlp_layernorm(mlp_output_with_bias[0])
         mlp_output_with_bias = (mlp_output, mlp_output_with_bias[1])
 
-        saved_states['post_mlp_layernorm'] = mlp_output
 
         # TODO: could we move `bias_dropout_add_exec_handler` itself
         # inside the module provided in the `bias_dropout_add_spec` module?
@@ -374,7 +357,6 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
             hidden_states = self.mlp_bda(self.training, self.config.bias_dropout_fusion)(
                 mlp_output_with_bias, residual, self.hidden_dropout
             )
-        saved_states['final_hidden_state'] = hidden_states
 
         # Jit compiled function creates 'view' tensor. This tensor
         # potentially gets saved in the MPU checkpoint function context,
@@ -385,8 +367,6 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
         output = make_viewless_tensor(
             inp=hidden_states, requires_grad=hidden_states.requires_grad, keep_graph=True
         )
-        if self.layer_number == 1:
-            torch.save(saved_states, 'all_hidden_states.pt')
         return output, context
 
     def sharded_state_dict(

@@ -609,7 +609,7 @@ def validate_args(args, defaults={}):
 
     if args.window_size:
         if isinstance(args.window_size, int):
-            args.window_size = (args.window_size, args.window_size)
+            args.window_size = (args.window_size, 0)
 
     # Checkpointing
     if args.ckpt_fully_parallel_save_deprecated and args.rank == 0:
