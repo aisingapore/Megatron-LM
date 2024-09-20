@@ -452,10 +452,7 @@ class TransformerBlock(MegatronModule):
                     packed_seq_params=packed_seq_params,
                 )
             else:
-                all_hidden_states = () 
-                all_self_attns = ()
                 for l_no, layer in enumerate(self.layers):
-                    all_hidden_states += (hidden_states,)
                     with self.offload_context:
                         if (len(self.cuda_graphs) == 0) or (not self.training):
                             hidden_states, context = layer(
@@ -467,7 +464,6 @@ class TransformerBlock(MegatronModule):
                                 inference_params=inference_params,
                                 packed_seq_params=packed_seq_params,
                             )
-                            all_self_attns += (hidden_states,)
                             # CUDA graph doesn't output context and is expected to be None
                             assert (
                                 (context is None)
@@ -504,11 +500,6 @@ class TransformerBlock(MegatronModule):
             hidden_states = make_viewless_tensor(
                 inp=hidden_states, requires_grad=True, keep_graph=True
             )
-        state = {
-            "all_hidden_states" : all_hidden_states,
-            "all_attn" : all_self_attns,
-        }
-        torch.save(state, "all_attn.pt")
         return hidden_states
 
     def sharded_state_dict(
