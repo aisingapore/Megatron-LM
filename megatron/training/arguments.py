@@ -899,6 +899,7 @@ def _add_network_size_args(parser):
                        help='Scalar for query before attention. Gemma2-9b uses 256, 27b uses 144')
     group.add_argument('--gated-linear-unit', action = 'store_true',
                         help= "Monkey patch to force GLU")
+    group.add_argument('--gemma-normalizer', action = 'store_true',)
     return parser
 
 

@@ -131,6 +131,8 @@ class TransformerConfig(ModelParallelConfig):
     query_pre_attn_scalar: float = None
     """Gemma's query scalar for pre-attention."""
 
+    gemma_normalizer: bool = False
+
     ####################
     # initialization
     ####################

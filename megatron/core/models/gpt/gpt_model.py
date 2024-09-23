@@ -95,6 +95,7 @@ class GPTModel(LanguageModule):
         # These 2 attributes are needed for TensorRT-LLM export.
         self.max_position_embeddings = max_sequence_length
         self.rotary_percent = rotary_percent
+        self._normalizer = None
 
         if self.pre_process:
             self.embedding = LanguageModelEmbedding(
@@ -177,6 +178,11 @@ class GPTModel(LanguageModule):
         assert len(input_tensor) == 1, 'input_tensor should only be length 1 for gpt/bert'
         self.decoder.set_input_tensor(input_tensor[0])
 
+    def get_normalizer(self, dtype):
+        if self._normalizer is None:
+            self._normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=dtype)
+        return self._normalizer
+
     def forward(
         self,
         input_ids: Tensor,
@@ -201,8 +207,9 @@ class GPTModel(LanguageModule):
             pass
         elif self.pre_process:
             decoder_input = self.embedding(input_ids=input_ids, position_ids=position_ids)
-            normalizer = torch.tensor(self.config.hidden_size**0.5, dtype=decoder_input.dtype)
-            decoder_input = decoder_input * normalizer
+            if self.config.gemma_normalizer:
+                normalizer = self.get_normalizer(decoder_input.dtype)
+                decoder_input = decoder_input * normalizer
         else:
             # intermediate stage of pipeline
             # decoder will get hidden_states from encoder.input_tensor
