@@ -5,8 +5,14 @@ from transformers import PretrainedConfig, AutoModelForCausalLM
 import torch
 import warnings
 import time
-
+import json
 import argparse
+
+# For now we need to hardcode some of the layers
+# This is because the Gemma2 checkpoint adds two extra layers for the norms
+
+# Refer to def load_layer to modify layers as required
+# the splitting of layers should be the same
 
 def fused_to_qkv(fused, nh, ng, dim):
     """
@@ -41,40 +47,45 @@ class CheckpointLoader:
     def __init__(self, base_folder : Union[str,os.PathLike],
                 pipeline_parallel_size: int,
                 tensor_parallel_size: int,
-                reference_config: PretrainedConfig=None):
+                reference_config: Union[str,os.PathLike]):
         self.base_folder = base_folder
         self.pipeline_n = pipeline_parallel_size
         self.tensor_n = tensor_parallel_size
-        self._state = list()
         if self.pipeline_n == 1:
             self.FILE_FORMAT = "mp_rank_{tensor:02d}/model_optim_rng.pt"
         else:
             self.FILE_FORMAT = "mp_rank_{tensor:02d}_{pipeline:03d}/model_optim_rng.pt"
 
+        self._state = self._load_checkpoints()
+        self.reference_config = PretrainedConfig.from_pretrained(reference_config)
+        self.model = None
+
+    def _load_checkpoints(self) -> list:
+        """
+        Function to load checkpoints, also performs sanity check
+        """
+        state_ = list()
         for pp in range(self.pipeline_n):
-            self._state.append([])
+            state_.append([])
             for tp in range(self.tensor_n):
                 if not os.path.exists(f"{self.base_folder}/{self.FILE_FORMAT.format(tensor = tp, pipeline = pp)}"):
                     raise FileNotFoundError(f"File {self.base_folder}/{self.FILE_FORMAT.format(tensor = tp, pipeline = pp)} not found")
                 else:
-                    print(f"Found file {self.base_folder}/{self.FILE_FORMAT.format(tensor = tp, pipeline = pp)}")
-                    state  = torch.load(f"{self.base_folder}/{self.FILE_FORMAT.format(tensor = tp, pipeline = pp)}", map_location="cpu")['model']
+                    print(f"Found file {self.base_folder}/{self.FILE_FORMAT.format(tensor = tp, pipeline = pp)}, loading", end="...", flush=True)
+                    state = torch.load(f"{self.base_folder}/{self.FILE_FORMAT.format(tensor = tp, pipeline = pp)}", map_location="cpu")['model']
+                    
                     # remove the extra states to save memory
                     state_keys = list(state.keys())
                     for key in state_keys:
                         if "_extra_state" in key:
                             del state[key]
-                    self._state[pp].append(torch.load(f"{self.base_folder}/{self.FILE_FORMAT.format(tensor = tp, pipeline = pp)}", map_location="cpu")['model'])
+                    print("Done")
+                    state_[pp].append(state)
+        return state_
 
-        if isinstance(reference_config, str):
-            self.reference_config = PretrainedConfig.from_pretrained(reference_config)
-        else:
-            self.reference_config = reference_config
-            assert isinstance(reference_config, PretrainedConfig), "reference_model should be an instance of PretrainedConfig or str"
-        self.model = None
         
     def load_embedding(self) -> torch.Tensor:
-        print("Loading embedding", end="...")
+        print("Loading embedding", end="...", flush=True)
         embedding = []
         for i in range(self.tensor_n):
             to_add = self._state[0][i]['embedding.word_embeddings.weight']
@@ -87,7 +98,7 @@ class CheckpointLoader:
         return embedding
     
     def load_output_layer(self) -> torch.Tensor:
-        print("Loading output layer", end="...")
+        print("Loading output layer", end="...", flush=True)
         output_layer = []
         for i in range(self.tensor_n):
             to_add = self._state[-1][i]['output_layer.weight']
@@ -100,7 +111,7 @@ class CheckpointLoader:
         return output_layer
     
     def load_final_layernorm(self) -> torch.Tensor:
-        print("Loading final layernorm", end="...")
+        print("Loading final layernorm", end="...", flush=True)
         final_layernorm = self._state[-1][0]['decoder.final_layernorm.weight']
         print("Done")
         return final_layernorm
@@ -132,7 +143,7 @@ class CheckpointLoader:
         state_dict[f"model.layers.{layer_idx}.post_feedforward_layernorm.weight"] = None
 
         _pipeline_number, _layer_number = divmod(layer_idx, self.reference_config.num_hidden_layers // self.pipeline_n)
-        print(f"Loading layer {layer_idx} from pipeline {_pipeline_number} tensor {_layer_number}", end="...")
+        print(f"Loading layer {layer_idx +1 } out of {n_layers} from pipeline {_pipeline_number} tensor {_layer_number}", end="...", flush=True)
         attn = []
         o_proj = []
         gate_proj = []
@@ -233,9 +244,15 @@ def parse_args():
     return parser.parse_args()
 
 def main():
+    """
+    Usage:
 
+    python convert_tp.py --base-folder /path/to/megatron_checkpoint --pp-size 1 --tp-size 1 --reference-hf-model /path/to/hf/model --save-path /path/to/save/checkpoint
+        --megatron-dir /path/to/megatron-lm --dtype bfloat16
+
+    Throws error if unable to find the checkpoints using the pp-size and tp-size
+    """
     args = parse_args()
-
     if args.megatron_dir is not None:
         import sys
         sys.path.append(args.megatron_dir)
@@ -250,7 +267,7 @@ def main():
 
     loader.load_model(from_pretrained=args.reference_hf_model, dtype=args.dtype)
 
-    print("Saving model", end="...")
+    print("Saving model", end="...", flush=True)
     loader.save_model(args.save_path)
     print("Done")
 
