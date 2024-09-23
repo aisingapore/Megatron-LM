@@ -340,7 +340,6 @@ def save_checkpoint(queue, args):
 
     # We want all arguments to come from us
     sys.argv = ['script.py',
-                '--num-layers', str(md.num_layers),
                 '--hidden-size', str(md.hidden_size),
                 '--seq-length', str(md.seq_length),
                 '--num-experts', str(getattr(md, "num_experts", 0)),
@@ -366,7 +365,36 @@ def save_checkpoint(queue, args):
                 '--save', args.save_dir,
                 '--ckpt-format', 'torch', # only 'torch' supported for conversion
                 ]
+    # Cause of gemma2 odd shape
+    if md.num_layers % args.target_pipeline_parallel_size != 0:
+        # We can't split the layers evenly, so we need to use uneven pipeline stages
+        num_layers = md.num_layers
+        num_stages = args.target_pipeline_parallel_size
+        # Write Python 3 code in this online editor and run it.
 
+        q, r = divmod(num_layers,num_stages)
+        print(q,r)
+        middle_layer= q+1
+        leftover_layers = num_layers - (middle_layer * (num_stages-2))
+        # again, try to split to 2
+        leftover_q , r = divmod(leftover_layers,2)
+
+        layer_list = [middle_layer]*(num_stages-2)
+        if r == 0:
+            first_stage = second_stage = leftover_q
+        else:
+            second_stage = leftover_q + 1
+            first_stage = leftover_q
+        layer_list.insert(0, first_stage)
+        layer_list.append(second_stage)
+        print(layer_list)
+        # important args, layer_list, first_stage, second_stage
+        sys.argv.extend(['--num-layers', str(middle_layer*args.target_pipeline_parallel_size),])
+    else:
+        layer_list = [md.num_layers // args.target_pipeline_parallel_size] * args.target_pipeline_parallel_size
+        first_stage = second_stage = None
+        sys.argv.extend(['--num-layers', str(md.num_layers),])
+            
     if md.make_vocab_size_divisible_by is not None:
         sys.argv.extend(['--make-vocab-size-divisible-by', str(md.make_vocab_size_divisible_by)])
     if md.params_dtype == torch.float16:
@@ -400,7 +428,7 @@ def save_checkpoint(queue, args):
                         'distribute_saved_activations',
                         'train_iters', 'lr_decay_iters', 'lr_warmup_iters', 'lr_warmup_fraction',
                         'start_weight_decay', 'end_weight_decay', 'layernorm_zero_centered_gamma',
-                        'ckpt_format',
+                        'ckpt_format','num_layers'
         ]
 
         for arg, value in vars(md.checkpoint_args).items():
@@ -434,7 +462,10 @@ def save_checkpoint(queue, args):
     margs.tokenizer_model = None
     margs.transformer_impl = args.saver_transformer_impl
     margs.gated_linear_unit = True
-
+    # margs.decoder_first_pipeline_num_layers = first_stage
+    # margs.decoder_last_pipeline_num_layers = second_stage
+    # fake create num_layers
+    # margs.num_layers = middle_layer * args.target_pipeline_parallel_size
     set_global_variables(margs, build_tokenizer=False)
 
     # Megatron args. (i.e., 'margs')
@@ -522,8 +553,10 @@ def save_checkpoint(queue, args):
         if models[pp_rank][ep_rank][tp_rank] is None:
             pre_process = True if pp_rank == 0 else False
             post_process = True if pp_rank == args.target_pipeline_parallel_size - 1 else False
+            # can we trick the layers here?
+            # fake_num_layers = layer_list[pp_rank] * args.target_pipeline_parallel_size
             models[pp_rank][ep_rank][tp_rank] = model_provider(pre_process, post_process).to(md.params_dtype)
-        return models[pp_rank][ep_rank][tp_rank]
+        return models[pp_rank][ep_rank][tp_rank]    
 
     # Set embeddings.
     # --------------
@@ -579,7 +612,10 @@ def save_checkpoint(queue, args):
     for pp_rank in range(args.target_pipeline_parallel_size):
         # initial the first module in pp stage to get the layer_num, pooler, lm_head. binary_head
         get_local_model(pp_rank,0,0)
-        for layer_id in range(len(setter.get_transformer_block(models[pp_rank][0][0]).layers)):
+        print(f"pp_rank: {pp_rank}")
+        print(len(setter.get_transformer_block(models[pp_rank][0][0]).layers))
+        for layer_id in range(layer_list[pp_rank]):
+        # for layer_id in range(len(setter.get_transformer_block(models[pp_rank][0][0]).layers)):
             msg = queue_get(f"transformer layer {total_layer_num}")
 
             # duplicated tensors
@@ -656,8 +692,17 @@ def save_checkpoint(queue, args):
             total_layer_num = total_layer_num + 1
             check_message(msg)
 
-
+        if pp_rank == 0:
+            # check if the first stage is set
+            # hardcoded for testing
+            for tp in range(args.target_tensor_parallel_size):
+                setter.get_transformer_block(models[pp_rank][0][tp]).layers = setter.get_transformer_block(models[pp_rank][0][tp]).layers[:layer_list[pp_rank]]
         if pp_rank == args.target_pipeline_parallel_size - 1:
+            # check if the last stage is set
+            # hardcoded for testing
+            for tp in range(args.target_tensor_parallel_size):
+                setter.get_transformer_block(models[pp_rank][0][tp]).layers = setter.get_transformer_block(models[pp_rank][0][tp]).layers[:layer_list[pp_rank]]
+
             msg = queue_get("final norm")
             final_norm_weight = msg.pop("weight")
             if md.norm_has_bias:

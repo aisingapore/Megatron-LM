@@ -237,9 +237,7 @@ class GPTModel(LanguageModule):
         logits, _ = self.output_layer(hidden_states, weight=output_weight)
 
         if self.final_logit_softcapping:
-            logits = logits / self.config.final_logit_softcapping
-            logits = torch.tanh(logits)
-            logits = logits * self.config.final_logit_softcapping
+            logits = self.softcap(logits, self.final_logit_softcapping)
         if has_config_logger_enabled(self.config):
             payload = OrderedDict(
                 {
@@ -258,6 +256,12 @@ class GPTModel(LanguageModule):
         loss = self.compute_language_model_loss(labels, logits)
 
         return loss
+
+    @staticmethod
+    @torch.compile
+    def softcap(logits: Tensor, softcap:float) -> Tensor:
+        """Softcap logits."""
+        return softcap * torch.tanh(logits / softcap)
 
     def sharded_state_dict(
         self, prefix: str = '', sharded_offsets: tuple = (), metadata: Optional[Dict] = None

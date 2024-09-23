@@ -88,7 +88,7 @@ def load_args_from_checkpoint(args):
     args.kv_channels = model_args['head_dim']
     args.gated_linear_unit = True
     args.apply_layernorm_1p = True
-    
+    args.sequence_parallel = True
 
     if "num_key_value_heads" in model_args:
         args.group_query_attention = True
