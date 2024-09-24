@@ -1,7 +1,7 @@
 
 from typing import Union
 import os
-from transformers import PretrainedConfig, AutoModelForCausalLM
+from transformers import PretrainedConfig, AutoModelForCausalLM, AutoTokenizer
 import torch
 import warnings
 import time
@@ -13,6 +13,8 @@ import argparse
 
 # Refer to def load_layer to modify layers as required
 # the splitting of layers should be the same
+
+# TODO: Change all references to dict.pop 
 
 def fused_to_qkv(fused, nh, ng, dim):
     """
@@ -34,7 +36,7 @@ def fused_to_qkv(fused, nh, ng, dim):
 
 def fused_mlp_to_gate_up(fused_tensor,ffn_hidden_size):
     """
-    Spit into gate and up_proj
+    Split into gate and up_proj
 
     Returns:
         gate, up_proj
@@ -45,20 +47,44 @@ def fused_mlp_to_gate_up(fused_tensor,ffn_hidden_size):
 class CheckpointLoader:
 
     def __init__(self, base_folder : Union[str,os.PathLike],
-                pipeline_parallel_size: int,
-                tensor_parallel_size: int,
-                reference_config: Union[str,os.PathLike]):
+                pipeline_parallel_size: int = None,
+                tensor_parallel_size: int = None,
+                reference_config: Union[str,os.PathLike]=None):
         self.base_folder = base_folder
         self.pipeline_n = pipeline_parallel_size
         self.tensor_n = tensor_parallel_size
+        self.pretrained_path = reference_config
+        # TODO: Should we try to infer PP and TP size from the folder?
+        if self.pipeline_n is None or self.tensor_n is None:
+            folders = os.listdir(base_folder)
+            self.pipeline_n, self.tensor_n = self.get_pp_tp(folders)
+
         if self.pipeline_n == 1:
             self.FILE_FORMAT = "mp_rank_{tensor:02d}/model_optim_rng.pt"
         else:
             self.FILE_FORMAT = "mp_rank_{tensor:02d}_{pipeline:03d}/model_optim_rng.pt"
 
         self._state = self._load_checkpoints()
-        self.reference_config = PretrainedConfig.from_pretrained(reference_config)
+        self.reference_config = PretrainedConfig.from_pretrained(self.pretrained_path)
         self.model = None
+
+    @staticmethod
+    def get_pp_tp(folders) -> tuple:
+        # check if there is pipeline parallelism
+        # when pipeline is 1, the folder is mp_rank_00
+        first_folder = folders[0]
+        name_split = first_folder.split("_")
+        if len(name_split) == 3:
+            # no PP
+            return 1, len(folders)
+        else:
+            # the last folder is the PP and TP size, usually
+            # TODO: Should we verify this?
+            last_folder = folders[-1]
+            name_split = last_folder.split("_")
+            tp = int(name_split[2])
+            pp = int(name_split[3])
+            return pp, tp
 
     def _load_checkpoints(self) -> list:
         """
@@ -100,10 +126,14 @@ class CheckpointLoader:
     def load_output_layer(self) -> torch.Tensor:
         print("Loading output layer", end="...", flush=True)
         output_layer = []
-        for i in range(self.tensor_n):
-            to_add = self._state[-1][i]['output_layer.weight']
-            output_layer.append(to_add)
-
+        try:
+            for i in range(self.tensor_n):
+                to_add = self._state[-1][i]['output_layer.weight']
+                output_layer.append(to_add)
+        except KeyError:
+            # this happens when the layers are tied
+            print("Output layer not found, returning embedding layer")
+            return self.load_embedding()
         output_layer = torch.cat(output_layer, dim=0)
         x = self.reference_config.vocab_size
         output_layer = output_layer[:x,:]
@@ -205,33 +235,42 @@ class CheckpointLoader:
             print("Consider using `load_model(from_pretrained= )` or `load_model(from_model= )`")
             self.model = AutoModelForCausalLM.from_config(self.reference_config)
 
-        self.model.load_state_dict({
-            "model.encoder.embed_tokens.weight": self.load_embedding(),
-            "model.lm_head.weight": self.load_output_layer(),
-            "model.model.norm.weight": self.load_final_layernorm()
-        }
-        , strict=False)
+        # get empty state_dict from model
+
+        empty_state_dict = self.model.state_dict()
+        for key in empty_state_dict.keys():
+            empty_state_dict[key] = None
+
+        empty_state_dict.update({
+            "model.embed_tokens.weight": self.load_embedding(),
+            "lm_head.weight": self.load_output_layer(),
+            "model.norm.weight": self.load_final_layernorm()
+        })
 
         for i in range(self.reference_config.num_hidden_layers):
             layer_dict = self.load_layer(i)
-            self.model.load_state_dict(layer_dict, strict=False)
+            empty_state_dict.update(layer_dict)
             print("Layer loaded")
+        
+        self.model.load_state_dict(empty_state_dict, strict=True)
 
     def save_model(self, save_path: Union[str, os.PathLike]):
-        
+        # for convenience, we save the tokenizer as well
+        tokenizer = AutoTokenizer.from_pretrained(self.pretrained_path)
         if self.model is None:
             raise ValueError("Model is not loaded yet")
+        tokenizer.save_pretrained(save_path)
         self.model.save_pretrained(save_path)
         
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Convert Gemma2 checkpoint to Megatron-LM checkpoint")
-    parser.add_argument("--base-folder","-i", type=str, required=True,
+    parser.add_argument("base_folder", type=str,
                         help="Path to the folder containing the Gemma2 checkpoint")
-    parser.add_argument("--pp-size", "-p", type=int, required=True,
+    parser.add_argument("--pp-size", "-p", type=int,
                         help="Number of pipeline parallel groups")
-    parser.add_argument("--tp-size","-t", type=int, required=True,
+    parser.add_argument("--tp-size","-t", type=int,
                         help="Number of tensor parallel groups")
     parser.add_argument("--reference-hf-model", type=str, required=True,
                         help="Path to the reference hf model, should contain config.json etc")
@@ -241,14 +280,19 @@ def parse_args():
                         help="Path to the Megatron-LM directory, either use this or use PYTHONPATH")
     parser.add_argument("--dtype", type=str, default="bfloat16",
                         help="Data type to use for the model, defaults to bfloat16")
-    return parser.parse_args()
-
+    parser.add_argument("--push-to-hub", type=str,
+                        help="Push the model to the HuggingFace model hub, requires login. Pass in as comma separated'key=value' pairs"
+                        "e.g --push-to-hub repo_id=myorg,revision=branch")
+    args = parser.parse_args()
+    if args.base_folder is None:
+        raise ValueError("Base folder is required, `python convert_tp.py --help` for more information")
+    return args
 def main():
     """
     Usage:
 
-    python convert_tp.py --base-folder /path/to/megatron_checkpoint --pp-size 1 --tp-size 1 --reference-hf-model /path/to/hf/model --save-path /path/to/save/checkpoint
-        --megatron-dir /path/to/megatron-lm --dtype bfloat16
+    python convert_tp.py --pp-size 1 --tp-size 1 --reference-hf-model /path/to/hf/model --save-path /path/to/save/checkpoint
+        --megatron-dir /path/to/megatron-lm --dtype bfloat16 /path/to/megatron_checkpoint
 
     Throws error if unable to find the checkpoints using the pp-size and tp-size
     """

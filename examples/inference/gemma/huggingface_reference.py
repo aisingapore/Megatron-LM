@@ -14,7 +14,7 @@ prompt = args.prompt
 
 config = AutoConfig.from_pretrained(model_path)
 tokenizer = AutoTokenizer.from_pretrained(model_path, config=config)
-model = AutoModelForCausalLM.from_pretrained(model_path, config=config).cuda()
+model = AutoModelForCausalLM.from_pretrained(model_path, config=config, torch_dtype = "bfloat16").cuda()
 
 inputs = tokenizer(prompt, return_tensors="pt")
 for key in inputs:

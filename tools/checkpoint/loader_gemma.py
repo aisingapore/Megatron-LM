@@ -76,7 +76,7 @@ def load_args_from_checkpoint(args):
     args.position_embedding_type = "rope"
     args.normalization = "RMSNorm"
     args.add_bias_linear = False
-    args.untie_embeddings_and_output_weights = True
+    args.untie_embeddings_and_output_weights = False
     args.vocab_size = model_args["vocab_size"]
     args.padded_vocab_size = model_args["vocab_size"]
     args.ffn_hidden_size = model_args["intermediate_size"]
@@ -104,7 +104,8 @@ def set_preprocess_state(args, model, hf_model):
 def set_postprocess_state(args, model, hf_model):
     '''Set output layer & norm params.'''
     model.decoder.final_layernorm.weight.data.copy_(hf_model.model.norm.weight)
-    model.output_layer.weight.data.copy_(hf_model.lm_head.weight)
+    if args.untie_embeddings_and_output_weights:
+        model.output_layer.weight.data.copy_(hf_model.lm_head.weight)
 
 
 def set_attn_state(args, layer, hf_layer):
