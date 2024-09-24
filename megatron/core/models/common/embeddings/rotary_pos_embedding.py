@@ -64,6 +64,7 @@ class RotaryEmbedding(nn.Module):
         seq_len_interpolation_factor: float = None,
         rotary_base: int = 10000,
         use_cpu_initialization: bool = False,
+        llama3_rope_kwargs: dict = None,
     ) -> None:
         super().__init__()
 
@@ -77,6 +78,35 @@ class RotaryEmbedding(nn.Module):
         self.inv_freq = 1.0 / (
             rotary_base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / dim)
         )
+        if llama3_rope_kwargs is not None:
+            self.inv_freq = self.llama3_get_inv_freq(self.inv_freq, llama3_rope_kwargs)
+
+    @staticmethod
+    def llama3_get_inv_freq(inv_freq: Tensor, llama3_rope_kwargs:dict) -> Tensor:
+        try:
+
+            low_freq_factor =  float(llama3_rope_kwargs["low_freq"])  # `1` in the original implementation
+            high_freq_factor = float(llama3_rope_kwargs["high_freq"])  # `4` in the original implementation
+            old_context_len = float(llama3_rope_kwargs["original_max_pos_emb"])  # `8192` in the original implementation
+            factor = float(llama3_rope_kwargs["factor"])
+        except KeyError as e:
+            raise KeyError(f"llama3_rope_kwargs must contain the following keys:"
+            "'low_freq', 'high_freq', 'original_max_pos_emb', 'factor'") from e
+        low_freq_wavelen = old_context_len / low_freq_factor
+        high_freq_wavelen = old_context_len / high_freq_factor
+
+        wavelen = 2 * torch.pi / inv_freq
+        # wavelen < high_freq_wavelen: do nothing
+        # wavelen > low_freq_wavelen: divide by factor
+        inv_freq_llama = torch.where(wavelen > low_freq_wavelen, inv_freq / factor, inv_freq)
+        # otherwise: interpolate between the two, using a smooth factor
+        smooth_factor = (old_context_len / wavelen - low_freq_factor) / (high_freq_factor - low_freq_factor)
+        smoothed_inv_freq = (1 - smooth_factor) * inv_freq_llama / factor + smooth_factor * inv_freq_llama
+        is_medium_freq = ~(wavelen < high_freq_wavelen) * ~(wavelen > low_freq_wavelen)
+        inv_freq_llama = torch.where(is_medium_freq, smoothed_inv_freq, inv_freq_llama)
+
+        return inv_freq_llama
+    
     @torch.no_grad()
     def forward(self, max_seq_len: int, offset: int = 0) -> Tensor:
         """Forward pass of RoPE embedding.

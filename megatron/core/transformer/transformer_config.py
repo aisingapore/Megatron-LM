@@ -134,6 +134,13 @@ class TransformerConfig(ModelParallelConfig):
     gemma_normalizer: bool = False
 
     ####################
+    # llama3.1 rope kwargs
+    ####################
+
+    llama3_rope_kwargs: dict = None
+    """Rope kwargs for LLaMa 3.1. Must contain the keys 'low_freq', 'high_freq', 'original_max_pos_emb', 'factor'"""
+
+    ####################
     # initialization
     ####################
     init_method: Callable = None

@@ -113,6 +113,7 @@ class GPTModel(LanguageModule):
                 seq_len_interpolation_factor=seq_len_interpolation_factor,
                 rotary_base=rotary_base,
                 use_cpu_initialization=self.config.use_cpu_initialization,
+                llama3_rope_kwargs=self.config.llama3_rope_kwargs,
             )
 
         # Transformer.

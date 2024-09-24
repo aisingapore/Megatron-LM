@@ -607,6 +607,10 @@ def validate_args(args, defaults={}):
     if args.apply_query_key_layer_scaling:
         args.attention_softmax_in_fp32 = True
 
+    if args.llama3_rope_kwargs:
+        # in the format of "key1=value1,key2=value2"
+        args.llama3_rope_kwargs = dict([kv.split('=') for kv in args.llama3_rope_kwargs.split(',')])
+
     if args.window_size:
         if isinstance(args.window_size, int):
             args.window_size = (args.window_size, 0)
@@ -900,6 +904,10 @@ def _add_network_size_args(parser):
     group.add_argument('--gated-linear-unit', action = 'store_true',
                         help= "Monkey patch to force GLU")
     group.add_argument('--gemma-normalizer', action = 'store_true',)
+    # for llama3.1
+    group.add_argument('--llama3-rope-kwargs', type=str, default=None,
+                       help='Rope kwargs for llama3.1, must contain low_freq,low_freq,original_max_pos_emb,factor'
+                       "Pass in as comma separated key value pairs must be in the form key1=value1,key2=value2")
     return parser
 
 
