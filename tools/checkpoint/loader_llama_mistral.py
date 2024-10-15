@@ -12,6 +12,7 @@ import gc
 import shutil
 from tqdm import tqdm
 import types
+from transformers import AutoConfig
 
 
 def add_arguments(parser):
@@ -294,9 +295,7 @@ def convert_to_hf(model_path, input_base_path, model_size, tokenizer_path):
 def load_args_from_checkpoint(args):
 
     # Read Llama args.
-    model_args_path = os.path.join(args.load, "config.json")
-    with open(model_args_path) as f:
-        model_args = json.load(f)
+    model_args = AutoConfig.from_pretrained(args.load).to_dict()
     # Update Megatron args.
     args.seq_length = 4096
     args.max_position_embeddings = model_args["max_position_embeddings"]
