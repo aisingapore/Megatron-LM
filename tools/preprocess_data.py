@@ -130,7 +130,7 @@ class Partition(object):
 
         encoder = Encoder(self.args)
         pool = multiprocessing.Pool(self.workers, initializer=encoder.initializer)
-        split_docs = pool.imap(encoder.split, fin, 32)
+        split_docs = pool.imap(encoder.split, fin, 128)
 
         proc_start = time.time()
         total_bytes_processed = 0

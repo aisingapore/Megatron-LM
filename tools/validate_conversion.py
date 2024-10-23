@@ -53,3 +53,4 @@ while True:
 
     print(f"Left model generated: {left_text}")
     print(f"Right model generated: {right_text}")
+    print(f"Output is same: {left_text == right_text}")
