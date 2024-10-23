@@ -1,6 +1,7 @@
 # validate_conversion.py
 # Usage
 # python validate_conversion.py <path_to_left_model> <path_to_right_model>
+# Can accept huggingface format `python validate_conversion.py ./converted-checkpoint/ meta-llama/Meta-Llama-3.1-8B`
 # used to test post conversion from megatron lm
 import sys
 from transformers import AutoModelForCausalLM, AutoTokenizer

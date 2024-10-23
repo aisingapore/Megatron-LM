@@ -15,6 +15,7 @@ import argparse
 # the splitting of layers should be the same
 
 # TODO: Change all references to dict.pop 
+# TODO: Move shared functions to utils.py
 
 def fused_to_qkv(fused, nh, ng, dim):
     """
