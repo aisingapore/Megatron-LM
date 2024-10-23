@@ -316,6 +316,9 @@ def main():
     print("Saving model", end="...", flush=True)
     loader.save_model(args.save_path)
     print("Done")
+    print("Now that the model has been converted, you can try validating it if its the same model or not.")
+    print("By using `python validate_conversion.py <path to model> <hf format or path>`")
+    print("The above order does not matter. ")
 
 if __name__ == "__main__":
     main()
