@@ -1,5 +1,11 @@
 # Convert checkpoints
 
+Both steps require GPU
+
+0. Start an interactive session
+```bash
+srun -N1 --gres=gpu:1 --pty bash
+```
 
 ## From megatron to HF
 
@@ -40,5 +46,24 @@ enroot start --rw -m SHARED_DIRECTORY nvidia
 SHARED_DIRECTORY is the shared mount, usually /fsx/ or /shared/
 
 2. Run convert script
+This script will convert the checkpoint from HF to megatron format
 ```
-bash 
+bash convert_checkpoint.sh
+```
+
+3. Stop enroot container
+```bash
+exit
+```
+
+## Potential issues:
+1. Cannot access gated repo
+
+Solution: Check if you have access to the model, then try exporting `HF_TOKEN` within the interactive or enroot.  
+Otherwise, usually others might have downloaded the model to the shared `HF_HUB_CACHE`. 
+
+Try to use `export HF_HUB_OFFLINE=1` and `export HF_HUB_CACHE=/path/to/shared/.cache/huggingface/hub` to use the models in the shared cache.
+
+## Contribution
+
+Please approach the repo maintainers for any issues or improvements
