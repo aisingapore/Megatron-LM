@@ -1,11 +1,13 @@
 # Convert checkpoints
 
-Both steps require GPU
+Pre-requisites:
 
 0. Start an interactive session
 ```bash
 srun -N1 --gres=gpu:1 --pty bash
 ```
+
+Also recommend exporting the HF_HUB_CACHE or HF_HOME variables to the common directory.
 
 ## From megatron to HF
 
@@ -50,10 +52,21 @@ This script will convert the checkpoint from HF to megatron format
 ```
 bash convert_checkpoint.sh
 ```
-
 3. Stop enroot container
 ```bash
 exit
+```
+
+## Validate the conversion
+
+1. Activate an environment with transformers
+
+2. Run the validation script. Internally it uses `from_pretrained`
+
+```bash
+python validate_conversion.py PATH_TO_CONVERTED_MODEL REFERENCE_MODEL
+
+# example python validate_conversion.py /path/to/converted_model meta-llama/Llama3.2-1B
 ```
 
 ## Potential issues:
