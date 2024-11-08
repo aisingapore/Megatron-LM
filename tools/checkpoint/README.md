@@ -21,7 +21,8 @@ export PYTHONPATH=/path/to/Megatron-LM
 ```
 3. Run the conversion script
 ```bash
-python convert_llama_back_to_hf.py --reference-hf-model REFERENCE_MODEL --save-path SAVE_DIR PATH_TO_MEGATRON_CHECKPOINT
+python convert_llama_back_to_hf.py --reference-hf-model <REFERENCE_MODEL> --save-path <SAVE_DIR> \
+ <PATH_TO_MEGATRON_CHECKPOINT>
 ```
 `REFERENCE_MODEL` is the name of the model in the HF model hub that you want to use as a reference for the conversion.  
 This can take a huggingface model format like `org/model` or a direct path to a transformers model
