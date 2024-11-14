@@ -257,6 +257,30 @@ def validate_args(args, defaults={}):
                   f'of "{legacy_default_split_value}"')
         args.split = legacy_default_split_value
 
+    # Data path validations
+    assert not (args.data_path is not None and args.data_path_stratified is not None), \
+        'Cannot specify both --data-path and --data-path-stratified'
+    
+    if args.data_path_stratified is not None:
+        if args.data_path_stratified and args.split is None:
+            legacy_default_split_value = '969, 30, 1'
+            if args.rank == 0:
+                print('WARNING: Please specify --split when using --data-path-stratified.'
+                      f' Using legacy default value of "{legacy_default_split_value}"')
+            args.split = legacy_default_split_value
+
+        # Validate number of arguments for weighted paths
+        if len(args.data_path_stratified) > 1:
+            assert len(args.data_path_stratified) % 2 == 0, \
+                'data path and weights are not paired in data-path-stratified'
+            for i in range(0, len(args.data_path_stratified), 2):
+                try:
+                    weight = float(args.data_path_stratified[i])
+                    assert weight > 0.0
+                except ValueError:
+                    raise AssertionError(
+                        'weight in data-path-stratified should be a float > 0.0')
+
     # Batch size.
     assert args.micro_batch_size is not None
     assert args.micro_batch_size > 0
@@ -585,6 +609,7 @@ def validate_args(args, defaults={}):
     # Data blend checks
     assert args.mock_data + \
            bool(args.data_path) + \
+           bool(args.data_path_stratified) + \
            any([args.train_data_path, args.valid_data_path, args.test_data_path]) \
            <= 1, "A single data source must be provided in training mode, else None"
 
@@ -1645,6 +1670,14 @@ def _add_data_args(parser):
     group = parser.add_argument_group(title='data and dataloader')
 
     group.add_argument('--data-path', nargs='*', default=None,
+                       help='The weight and prefix list for a set of train, validation, and test'
+                       'datasets which split according to --split. The accepted formats are: '
+                       '(1) a single prefix, '
+                       '(2) a list of weight prefix pairs e.g. weight1 prefix1 weight2 prefix2, '
+                       '(3) a list of prefixes e.g. prefix1 prefix2. '
+                       'For (3), weights are inferred from the lengths of the contributing datasets. '
+                       'This argument is exclusive to the other independent --*-data-path arguments.')
+    group.add_argument('--data-path-stratified', nargs='*', default=None,
                        help='The weight and prefix list for a set of train, validation, and test'
                        'datasets which split according to --split. The accepted formats are: '
                        '(1) a single prefix, '
