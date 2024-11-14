@@ -11,6 +11,7 @@ import torch
 from megatron.core.datasets.blended_dataset import BlendedDataset
 from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatronDatasetConfig
 from megatron.core.datasets.megatron_dataset import LowLevelDataset, MegatronDataset
+from megatron.core.datasets.indexed_dataset import IndexedDataset
 from megatron.core.datasets.utils import Split, normalize
 from megatron.core.parallel_state import get_virtual_pipeline_model_parallel_rank
 from megatron.core.utils import log_single_rank
@@ -25,6 +26,51 @@ DistributedDataset = Union[
     TopLevelDataset, MidLevelDataset, LowLevelDataset, torch.utils.data.Dataset
 ]
 
+class StratifiedDataset:
+    def __init__(self, datasets: dict):
+        """
+        Initialize the StratifiedDataset with a dictionary of datasets.
+
+        Args:
+            datasets (dict): A dictionary where each key is a prefix and each value is a dictionary
+                             containing 'dataset' (an instance of MegatronDataset) and 'weight' (a float).
+        """
+        self.datasets = datasets
+
+    def __len__(self):
+        """
+        Return the total number of samples in all datasets.
+
+        Returns:
+            int: The sum of the number of samples in all datasets.
+        """
+        total_samples = 0
+        for dataset_info in self.datasets.values():
+            dataset = dataset_info['dataset']
+            total_samples += len(dataset)
+        return total_samples
+
+    def __getitems__(self, indices: List[Tuple[str, int]]) -> List[Any]:
+        """
+        Fetch samples from the datasets based on the provided indices.
+
+        Args:
+            indices (List[Tuple[str, int]]): A list of tuples where each tuple contains a dataset prefix
+                                             and a sample index within that dataset.
+
+        Returns:
+            List[Any]: A list of samples fetched from the datasets.
+        """
+        samples = []
+        for prefix, sample_index in indices:
+            dataset_info = self.datasets.get(prefix)
+            if dataset_info is not None:
+                dataset = dataset_info['dataset']
+                sample = dataset[sample_index]
+                samples.append(sample)
+            else:
+                raise KeyError(f"Dataset with prefix '{prefix}' not found.")
+        return samples
 
 class BlendedMegatronDatasetBuilder(object):
     """Builder class for the BlendedDataset and MegatronDataset classes
@@ -156,13 +202,29 @@ class BlendedMegatronDatasetBuilder(object):
 
         return datasets
 
-    def _build_blended_dataset_splits(self) -> List[Optional[TopLevelDataset]]:
+    def _build_blended_dataset_splits(
+        self
+    ) -> Union[
+        List[Optional[TopLevelDataset]], 
+        List[Dict[str, Dict[str, Union[LowLevelDataset, float]]]]
+    ]:
         """Build all dataset splits according to the provided blend(s)
 
         See the BlendedMegatronDatasetBuilder.build alias for more information.
 
         Returns:
-            List[Optional[TopLevelDataset]]: A list containing a dataset instance (or None) per split
+            Union[List[Optional[TopLevelDataset]], List[Dict[str, Dict[str, Union[MegatronDataset, float]]]]]: 
+                - If not using stratified batching:
+                    A list containing a dataset instance (or None) per split
+                - If using stratified batching:
+                    A list of dictionaries, where each dictionary contains:
+                    {
+                        prefix: {
+                            'dataset': MegatronDataset,
+                            'weight': float
+                        }
+                    }
+                    for each enabled split
         """
         ##
         # Return fake "mock" datasets
@@ -186,52 +248,86 @@ class BlendedMegatronDatasetBuilder(object):
 
             split = self.config.split_matrix
 
-            # Blend consists of a single prefix
+            # If we only have one dataset prefix and no weights specified,
+            # we can directly build a single dataset without blending
             if len(prefixes) == 1 and weights is None:
                 return self._build_megatron_dataset_splits(prefixes[0], split, self.sizes)
 
-            # Build the mid-level datasets
+            # For multiple datasets, we need to determine the size of each dataset per split
+            # If no weights are provided, set all sizes to None to use full dataset sizes
             if weights is None:
+                # Create a 2D list of None values with dimensions:
+                # [num_prefixes][num_splits]
                 sizes_per_dataset = [[None for split in Split] for prefix in prefixes]
             else:
+                # Calculate the size of each dataset per split based on the provided weights
+                # This ensures datasets are sampled proportionally according to weights
                 sizes_per_dataset = _get_size_per_split_per_dataset(weights, self.sizes)
 
-            # build each dataset in parallel
+            # Build all the individual datasets in parallel for efficiency
+            # Each dataset is built according to its prefix, split configuration,
+            # and target size per split
             megatron_datasets = self._build_megatron_datasets_parallel(
                 prefixes, split, sizes_per_dataset
             )
 
-            # Build the top-level datasets
-            blended_datasets = [None] * len(Split)
-            for i in range(len(Split)):
-                if split[i] is not None:
-                    weights_i = weights
+            # If using stratified batching, return datasets with their proportions
+            if self.config.stratified:
+                stratified_datasets = []
+                # Only iterate through enabled splits based on split matrix
+                for i in range(len(Split)):
+                    if split[i] is not None:
+                        split_dict = {}
+                        for prefix, dataset, weight in zip(prefixes, megatron_datasets[i], weights):
+                            split_dict[prefix] = {'dataset': dataset, 'weight': weight}
+                        stratified_datasets.append(split_dict)
+                return stratified_datasets
+
+            # Build the top-level datasets by blending multiple datasets together
+            blended_datasets = [None] * len(Split)  # Initialize list to store blended datasets for each split
+            for i in range(len(Split)):  # Iterate through each split (train/val/test)
+                if split[i] is not None:  # Only process if this split is enabled
+                    weights_i = weights  # Get weights for blending datasets
+                    
+                    # Case 1: We have predefined weights and sizes
                     if weights_i is not None and self.sizes[i] is not None:
+                        # Get size for each dataset in this split
                         size_per_dataset = list(zip(*sizes_per_dataset))[i]
-                        size_i = sum(size_per_dataset)
+                        size_i = sum(size_per_dataset)  # Total size for this split
+                        # Optionally renormalize weights based on actual dataset sizes
                         if self.config.renormalize_blend_weights:
                             weights_i = list(map(lambda _size: _size / size_i, size_per_dataset))
+                    
+                    # Case 2: No predefined weights - use dataset lengths as weights
                     elif weights_i is None:
                         try:
+                            # Try to get lengths of each dataset to use as weights
                             weights_i = [
                                 len(megatron_dataset) for megatron_dataset in megatron_datasets[i]
                             ]
                         except TypeError:
+                            # If lengths not available, use equal weights of 0
                             weights_i = [0 for _ in prefixes]
+                            
+                        # Set size to either specified size or sum of dataset lengths
                         if self.sizes[i] is not None:
                             size_i = min(self.sizes[i], sum(weights_i))
                         else:
-                            size_i = None  # => the size will be sum(weights_i)
+                            size_i = None  # Will default to sum of all dataset lengths
+                    
+                    # Case 3: Invalid state - weights without sizes
                     else:
                         raise RuntimeError
+                        
+                    # Create the blended dataset by combining individual datasets
                     blended_datasets[i] = self.build_generic_dataset(
-                        BlendedDataset,
-                        self.is_built_on_rank,
-                        True,  # synchronize_ranks, default behavior to build on rank-0 first
-                        megatron_datasets[i],
-                        weights_i,
-                        size_i,
-                        self.config,
+                        BlendedDataset,  # Class to instantiate
+                        self.is_built_on_rank,  # Whether to build on this rank
+                        True,  # synchronize_ranks: build on rank-0 first
+                        megatron_datasets[i],  # List of datasets to blend
+                        weights_i,  # Weights for blending
+                        size_i,  # Total size of blended dataset
+                        self.config,  # Configuration object
                     )
 
             return blended_datasets

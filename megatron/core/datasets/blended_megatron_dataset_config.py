@@ -19,6 +19,9 @@ class BlendedMegatronDatasetConfig:
     random_seed: int
     """The seed for all RNG during dataset creation."""
 
+    stratified: bool = False
+    """Whether to use stratified batching."""
+
     sequence_length: int
     """The sequence length."""
 

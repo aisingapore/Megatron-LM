@@ -110,7 +110,7 @@ def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megat
 
     return model
 
-
+# load a batch of data from the data iterator, and shard them based on TP and CP, return the sharded and decomposed batch
 def get_batch(data_iterator):
     """Generate a batch."""
 
@@ -204,10 +204,16 @@ def is_dataset_built_on_rank():
 def core_gpt_dataset_config_from_args(args):
     tokenizer = get_tokenizer()
 
+    if args.data_path_stratified is not None:
+        blend = get_blend_from_list(args.data_path_stratified)
+    else:
+        blend = get_blend_from_list(args.data_path)
+
     return GPTDatasetConfig(
         random_seed=args.seed,
         sequence_length=args.seq_length,
-        blend=get_blend_from_list(args.data_path),
+        blend=blend,
+        stratified=args.data_path_stratified is not None,
         blend_per_split=[
             get_blend_from_list(args.train_data_path),
             get_blend_from_list(args.valid_data_path),
@@ -244,12 +250,21 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
 
     print_rank_0("> building train, validation, and test datasets for GPT ...")
 
-    train_ds, valid_ds, test_ds = BlendedMegatronDatasetBuilder(
-        dataset_type,
-        train_val_test_num_samples,
-        is_dataset_built_on_rank,
-        config
-    ).build()
+    # if pre-blended batch used:
+    if args.data_path_stratified is None:
+        train_ds, valid_ds, test_ds = BlendedMegatronDatasetBuilder(
+            dataset_type,
+            train_val_test_num_samples,
+            is_dataset_built_on_rank,
+            config
+        ).build()
+    else: # if stratified batch using:
+        train_ds, valid_ds, test_ds = BlendedMegatronDatasetBuilder(
+            dataset_type,
+            train_val_test_num_samples,
+            is_dataset_built_on_rank,
+            config
+        ).build_stratified()
 
     print_rank_0("> finished creating GPT datasets ...")
 
