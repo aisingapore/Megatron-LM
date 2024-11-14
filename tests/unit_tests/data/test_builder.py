@@ -10,7 +10,7 @@ from typing import Dict, Optional
 import numpy
 import pytest
 import torch
-
+import math
 from megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegatronDatasetBuilder
 from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatronDatasetConfig
 from megatron.core.datasets.megatron_dataset import LowLevelDataset, MegatronDataset
@@ -27,6 +27,11 @@ for split in Split:
     for i in range(_NUM_DATASETS):
         _SIZES[split].append({Split.train: 1000, Split.valid: 100, Split.test: 10}[split] * (i + 1))
 
+"""
+train: [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000]
+valid: [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
+test: [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+"""
 _MARGIN = 0.005
 
 
@@ -45,12 +50,40 @@ def do_setup(odir):
 
     return paths
 
+"""
+train split paths:
+Dataset 0: /tmp/tmptxzol9u5/0/train.npy, 
+containing numpy array of zeros with shape (_SIZES[Split.train][i], _SEQUENCE_LENGTH),
+i.e. (1000, 10)
+...
+Dataset 9: /tmp/tmptxzol9u5/9/train.npy
+containing numpy array of zeros with shape (_SIZES[Split.train][i], _SEQUENCE_LENGTH),
+i.e. (10000, 10)
+
+
+valid split paths:
+...
+
+test split paths:
+Dataset 0: /tmp/tmptxzol9u5/0/test.npy
+...
+Dataset 9: /tmp/tmptxzol9u5/9/test.npy
+"""
 
 def test_builder():
     if torch.distributed.is_available():
         Utils.initialize_distributed()
         if torch.distributed.get_rank() == 0:
             compile_helpers()
+
+        # Add cache path configuration
+        cache_path = "/shared/aisingapore/.tmp_yuli/megatron_cache"  # or another appropriate path
+        os.makedirs(cache_path, exist_ok=True)
+        
+        # When creating your BlendedDataset, pass the cache path
+        dataset_config = {
+            "path_to_cache": cache_path,
+        }
         torch.distributed.barrier()
     else:
         compile_helpers()
@@ -104,9 +137,13 @@ def test_builder():
             )
             for split in Split
         }
+        # blends is a dictionary where each key is a Split enum (train, valid, test)
+        # and each value is a tuple. The first element of the tuple is a list of dataset
+        # prefixes (strings), and the second element is either None or a list of weights (floats).
 
         blends_unweighted = {split: (blends[split][0], None) for split in blends}
 
+####################################################################################################### Existing Tests
         config = BlendedMegatronDatasetConfig(
             random_seed=1234,
             sequence_length=_SEQUENCE_LENGTH,
@@ -387,6 +424,54 @@ def test_builder():
                 len(datasets[1]) >= 100 and len(datasets[1]) <= 100 * (1 + _MARGIN) + _NUM_DATASETS
             )
             assert len(datasets[2]) == 0
+
+        # Test stratified batching with multiple datasets
+        blend = (
+            [paths[Split.train][0], paths[Split.train][1], paths[Split.train][2], paths[Split.train][3], paths[Split.train][4]],  # First five dataset paths
+            [0.4, 0.2, 0.15, 0.15, 0.1]  # Their weights
+        )
+
+        config = BlendedMegatronDatasetConfig(
+            random_seed=1234,
+            sequence_length=_SEQUENCE_LENGTH,
+            blend=blend,  # Don't set blend directly
+            split="990,9,1",
+            stratified=True,
+            renormalize_blend_weights=True,
+        )
+        
+        # Sizes list should match the splits configuration
+        sizes = [990,9,1]  # Only train split has size
+        
+        train_datasets, _, _ = BlendedMegatronDatasetBuilder(
+            TestDataset, sizes, lambda: True, config
+        ).build()
+        
+        # Verify dictionary structure for train split
+        for prefix in train_datasets:
+            assert 'dataset' in train_datasets[prefix]
+            assert 'weight' in train_datasets[prefix]
+            assert isinstance(train_datasets[prefix]['dataset'], TestDataset)
+            assert isinstance(train_datasets[prefix]['weight'], (int, float))
+            
+        # Verify total size across stratified datasets matches expected
+        train_total_size = sum(len(d['dataset']) for d in train_datasets.values())
+        assert train_total_size >= 990 and train_total_size <= 990 * (1 + _MARGIN) + _NUM_DATASETS
+
+        # Verify structure for stratified datasets
+        assert isinstance(train_datasets, dict)
+        assert len(train_datasets) == 5  # Should have 5 datasets
+        
+        # Get the dataset paths (will be like '0/train.npy' and '1/train.npy')
+        dataset_paths = [paths[Split.train][0], paths[Split.train][1]]
+        
+        # Verify each dataset in the stratified dict
+        for path, weight in zip(dataset_paths, [0.4, 0.2, 0.15, 0.15, 0.1]):
+            assert path in train_datasets
+            assert 'dataset' in train_datasets[path]
+            assert 'weight' in train_datasets[path]
+            assert isinstance(train_datasets[path]['dataset'], TestDataset)
+            assert math.isclose(train_datasets[path]['weight'], weight)
 
 
 if __name__ == "__main__":

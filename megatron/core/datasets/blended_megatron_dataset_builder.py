@@ -3,7 +3,7 @@
 import logging
 import math
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Iterable, List, Optional, Type, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Type, Union, Tuple
 
 import numpy
 import torch
@@ -167,9 +167,12 @@ class BlendedMegatronDatasetBuilder(object):
                 - Build a top-level dataset with no excess mid-level dataset sampling
 
         Returns:
-            List[Optional[TopLevelDataset]]: A list containing a dataset instance (or None) per split
+            Union[List[Optional[TopLevelDataset]], List[Dict[str, Dict[str, Union[MegatronDataset, float]]]]]: A list containing a dataset instance (or None) per split
         """
         datasets = self._build_blended_dataset_splits()
+
+        if self.config.stratified:
+            return datasets
 
         for dataset in datasets:
             if dataset is not None and len(dataset) > 0:

@@ -19,9 +19,6 @@ class BlendedMegatronDatasetConfig:
     random_seed: int
     """The seed for all RNG during dataset creation."""
 
-    stratified: bool = False
-    """Whether to use stratified batching."""
-
     sequence_length: int
     """The sequence length."""
 
@@ -71,6 +68,9 @@ class BlendedMegatronDatasetConfig:
 
     tokenizer: Optional[MegatronTokenizer] = None
     """The MegatronTokenizer instance or None. Required for datasets which do online tokenization."""
+
+    stratified: bool = False
+    """Whether to use stratified batching."""
 
     def __post_init__(self) -> None:
         """Do asserts and set fields post init"""

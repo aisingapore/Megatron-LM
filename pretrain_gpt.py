@@ -250,21 +250,12 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
 
     print_rank_0("> building train, validation, and test datasets for GPT ...")
 
-    # if pre-blended batch used:
-    if args.data_path_stratified is None:
-        train_ds, valid_ds, test_ds = BlendedMegatronDatasetBuilder(
-            dataset_type,
-            train_val_test_num_samples,
-            is_dataset_built_on_rank,
-            config
-        ).build()
-    else: # if stratified batch using:
-        train_ds, valid_ds, test_ds = BlendedMegatronDatasetBuilder(
-            dataset_type,
-            train_val_test_num_samples,
-            is_dataset_built_on_rank,
-            config
-        ).build_stratified()
+    train_ds, valid_ds, test_ds = BlendedMegatronDatasetBuilder(
+        dataset_type,
+        train_val_test_num_samples,
+        is_dataset_built_on_rank,
+        config
+    ).build()
 
     print_rank_0("> finished creating GPT datasets ...")
 
