@@ -42,12 +42,11 @@ def build_pretraining_data_loader(dataset, consumed_samples):
         # return dataset
         batch_sampler = MegatronPretrainingStratifiedSampler(
             dataset_with_weight=dataset,
-            total_samples=len(dataset),
+            global_batch_size=args.global_batch_size,
             consumed_samples=consumed_samples,
             micro_batch_size=args.micro_batch_size,
             data_parallel_rank=mpu.get_data_parallel_rank(),
-            data_parallel_size=mpu.get_data_parallel_world_size(),
-            data_sharding=args.data_sharding)
+            data_parallel_size=mpu.get_data_parallel_world_size())
         
         # Merge the datasets for DataLoader, i.e.
         # from: {prefix: {'weight': float, 'total_samples': int, 'dataset': MegatronDataset}} 
