@@ -325,7 +325,7 @@ class MegatronPretrainingStratifiedSampler:
                 # Calculate the starting index for this rank
                 start_idx = self.data_parallel_rank + i * (self.data_parallel_size * self.micro_batch_size)
                 # Collect indices for this rank's global-batch
-                print(f"Slicing of rank_indices: {list(range(start_idx, self.global_batch_size, self.data_parallel_size))}")
+                # print(f"Slicing of rank_indices: {list(range(start_idx, self.global_batch_size, self.data_parallel_size))}")
                 rank_indices = global_batch_indices[start_idx:self.global_batch_size:self.data_parallel_size]
                 # Collect indices for this rank's micro-batch
                 micro_batch_indices=rank_indices[:self.micro_batch_size]

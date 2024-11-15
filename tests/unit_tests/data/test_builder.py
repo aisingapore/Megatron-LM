@@ -569,26 +569,27 @@ def test_builder():
             )
             # print(f"{prefix}: {num_samples} (expected: {expected_num_samples})")
 
-        global_batch_indices = sampler.__collate_global_batch__()
-        # print("Global batch indices:")
-        # for index in global_batch_indices:
-        #     print(index)
 
         # Test iteration
         iterator = iter(sampler)
+
+        # Global batch to display
+        global_batch_number_to_display = 2
         
         # Iterate over all micro batches inside one global batch
         for micro_batch_number, micro_batch_indices in enumerate(iterator):
-            print(f"\nMicro Batch {micro_batch_number + 1}:")
-            print(f"Micro Batch size: {len(micro_batch_indices)} (should be {sampler.micro_batch_size})")
-            print(f"Rank: {sampler.data_parallel_rank} Sample of indices:")
+            print(f"\nRank: {sampler.data_parallel_rank}, Micro Batch: {micro_batch_number + 1}:")
+            assert len(micro_batch_indices) == sampler.micro_batch_size, (
+                f"Micro Batch size: {len(micro_batch_indices)} (should be {sampler.micro_batch_size})"
+            )
             for sample_id_in_micro_batch, (prefix, idx) in enumerate(micro_batch_indices):
                 print(f"  {sample_id_in_micro_batch}: Dataset: {prefix}, Index: {idx}")
                 # Verify we can actually get this item
                 item = sampler.dataset_with_weight[prefix]['dataset'][idx]
                 # print(f"  Retrieved item type: {type(item)}")
             # only show the first global batch
-            if (micro_batch_number + 1) * sampler.micro_batch_size * sampler.data_parallel_size >= sampler.global_batch_size:
+            global_batch_number = (micro_batch_number + 1) * sampler.micro_batch_size * sampler.data_parallel_size // sampler.global_batch_size
+            if global_batch_number >= global_batch_number_to_display:
                 break
 
 if __name__ == "__main__":
