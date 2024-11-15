@@ -16,6 +16,9 @@ from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatr
 from megatron.core.datasets.megatron_dataset import LowLevelDataset, MegatronDataset
 from megatron.core.datasets.utils import Split, compile_helpers, get_blend_from_list
 from tests.unit_tests.test_utilities import Utils
+from megatron.training.global_vars import _GLOBAL_ARGS, get_args, set_global_variables
+from argparse import Namespace
+from megatron.core.parallel_state import initialize_model_parallel
 
 _NUM_DATASETS = 10
 
@@ -34,6 +37,72 @@ test: [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
 """
 _MARGIN = 0.005
 
+# Define the class here to avoid pytest warnings
+class TestDataset(MegatronDataset):
+    def __init__(
+        self,
+        dataset: LowLevelDataset,
+        dataset_path: Optional[str],
+        indices: numpy.ndarray,
+        num_samples: Optional[int],
+        index_split: Split,
+        config: BlendedMegatronDatasetConfig,
+    ) -> None:
+        super().__init__(dataset, dataset_path, indices, num_samples, index_split, config)
+
+        if self.num_samples is None:
+            self.num_samples = len(self.indices)
+
+        self.sample_index = numpy.random.choice(self.indices, size=self.num_samples)
+
+    @staticmethod
+    def numel_low_level_dataset(low_level_dataset: LowLevelDataset) -> int:
+        return len(low_level_dataset)
+
+    @staticmethod
+    def build_low_level_dataset(
+        dataset_path: str, config: BlendedMegatronDatasetConfig
+    ) -> LowLevelDataset:
+        return numpy.load(dataset_path)
+
+    def __len__(self) -> int:
+        return len(self.sample_index)
+
+    def __getitem__(self, idx: int) -> Dict[str, numpy.ndarray]:
+        return {"text": self.dataset[self.sample_index[idx]]}
+
+class TestDataset2(MegatronDataset):
+    def __init__(
+        self,
+        dataset: LowLevelDataset,
+        dataset_path: Optional[str],
+        indices: numpy.ndarray,
+        num_samples: Optional[int],
+        index_split: Split,
+        config: BlendedMegatronDatasetConfig,
+    ) -> None:
+        super().__init__(dataset, dataset_path, indices, num_samples, index_split, config)
+
+        if self.num_samples is None:
+            self.num_samples = len(self.indices)
+
+        self.sample_index = numpy.random.choice(self.indices, size=self.num_samples)
+
+    @staticmethod
+    def numel_low_level_dataset(low_level_dataset: LowLevelDataset) -> int:
+        return len(low_level_dataset)
+
+    @staticmethod
+    def build_low_level_dataset(
+        dataset_path: str, config: BlendedMegatronDatasetConfig
+    ) -> LowLevelDataset:
+        return numpy.load(dataset_path)
+
+    def __len__(self) -> int:
+        return len(self.sample_index)
+
+    def __getitem__(self, idx: int) -> Dict[str, numpy.ndarray]:
+        return self.dataset[self.sample_index[idx]]
 
 def do_setup(odir):
     paths = defaultdict(list)
@@ -108,41 +177,6 @@ def test_builder():
         torch.distributed.barrier()
     else:
         compile_helpers()
-
-    # Define the class here to avoid pytest warnings
-
-    class TestDataset(MegatronDataset):
-        def __init__(
-            self,
-            dataset: LowLevelDataset,
-            dataset_path: Optional[str],
-            indices: numpy.ndarray,
-            num_samples: Optional[int],
-            index_split: Split,
-            config: BlendedMegatronDatasetConfig,
-        ) -> None:
-            super().__init__(dataset, dataset_path, indices, num_samples, index_split, config)
-
-            if self.num_samples is None:
-                self.num_samples = len(self.indices)
-
-            self.sample_index = numpy.random.choice(self.indices, size=self.num_samples)
-
-        @staticmethod
-        def numel_low_level_dataset(low_level_dataset: LowLevelDataset) -> int:
-            return len(low_level_dataset)
-
-        @staticmethod
-        def build_low_level_dataset(
-            dataset_path: str, config: BlendedMegatronDatasetConfig
-        ) -> LowLevelDataset:
-            return numpy.load(dataset_path)
-
-        def __len__(self) -> int:
-            return len(self.sample_index)
-
-        def __getitem__(self, idx: int) -> Dict[str, numpy.ndarray]:
-            return {"text": self.dataset[self.sample_index[idx]]}
 
     with tempfile.TemporaryDirectory() as temp_dir:
 
@@ -574,7 +608,7 @@ def test_builder():
         iterator = iter(sampler)
 
         # Global batch to display
-        global_batch_number_to_display = 2
+        global_batch_number_to_test = 2
         
         # Iterate over all micro batches inside one global batch
         for micro_batch_number, micro_batch_indices in enumerate(iterator):
@@ -583,14 +617,134 @@ def test_builder():
                 f"Micro Batch size: {len(micro_batch_indices)} (should be {sampler.micro_batch_size})"
             )
             for sample_id_in_micro_batch, (prefix, idx) in enumerate(micro_batch_indices):
-                print(f"  {sample_id_in_micro_batch}: Dataset: {prefix}, Index: {idx}")
+                # print(f"  {sample_id_in_micro_batch}: Dataset: {prefix}, Index: {idx}")
                 # Verify we can actually get this item
                 item = sampler.dataset_with_weight[prefix]['dataset'][idx]
                 # print(f"  Retrieved item type: {type(item)}")
             # only show the first global batch
             global_batch_number = (micro_batch_number + 1) * sampler.micro_batch_size * sampler.data_parallel_size // sampler.global_batch_size
-            if global_batch_number >= global_batch_number_to_display:
+            if global_batch_number >= global_batch_number_to_test:
                 break
 
+def test_build_stratified_dataloader():
+    """Test the build_pretraining_data_loader function with external dataloader type"""
+    from megatron.training.global_vars import _GLOBAL_ARGS, get_args, set_global_variables
+    from megatron.core.parallel_state import (
+        initialize_model_parallel,
+        get_data_parallel_world_size,
+        get_data_parallel_rank,
+    )
+    from argparse import Namespace
+
+    # Initialize dummy args properly using set_global_variables
+    args = Namespace(
+        dataloader_type='external',
+        num_workers=0,
+        micro_batch_size=8,
+        data_sharding=False,
+        # Add required arguments for init_num_microbatches_calculator
+        rank=0,
+        rampup_batch_size=None,
+        global_batch_size=32,
+        data_parallel_size=2,
+        decrease_batch_size_if_needed=False,
+        # Add arguments for other initializations
+        tensorboard_dir=None,
+        tensorboard_queue_size=1,
+        wandb_project=None,
+        enable_one_logger=False,
+        adlr_autoresume=False,
+        timing_log_level=0,
+        timing_log_option='minmax',
+        exit_signal_handler=False,
+    )
+    
+    # Skip tokenizer building since we don't need it for dataloader test
+    set_global_variables(args, build_tokenizer=False)
+
+    if torch.distributed.is_available():
+        Utils.initialize_distributed()
+        
+        # Add this minimal initialization
+        initialize_model_parallel(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+        )
+        
+        if torch.distributed.get_rank() == 0:
+            compile_helpers()
+
+        # Add cache path configuration
+        cache_path = "/shared/aisingapore/.tmp_yuli/megatron_cache"
+        os.makedirs(cache_path, exist_ok=True)
+        
+        dataset_config = {
+            "path_to_cache": cache_path,
+        }
+        torch.distributed.barrier()
+    else:
+        compile_helpers()
+
+    # Now get_args() should work
+    args = get_args()
+    assert args.dataloader_type == 'external'
+    
+    with tempfile.TemporaryDirectory() as temp_dir:
+
+        paths = do_setup2(temp_dir)
+
+        blend = (
+            [paths[Split.train][0], paths[Split.train][1], paths[Split.train][2], paths[Split.train][3], paths[Split.train][4]],  # First five dataset paths
+            [0.4, 0.2, 0.15, 0.15, 0.1]  # Their weights
+        )
+
+        config = BlendedMegatronDatasetConfig(
+            random_seed=1234,
+            sequence_length=_SEQUENCE_LENGTH,
+            blend=blend,  # Don't set blend directly
+            split="990,9,1",
+            stratified=True,
+            renormalize_blend_weights=True,
+        )
+        
+        # Sizes list should match the splits configuration
+        sizes = [990,9,1]  # Only train split has size
+        
+        train_datasets, _, _ = BlendedMegatronDatasetBuilder(
+            TestDataset2, sizes, lambda: True, config
+        ).build()
+
+        # first_item_key = next(iter(train_datasets))
+        # print(f"First item of train_datasets: {first_item_key}: {train_datasets[first_item_key]}")
+
+        from megatron.legacy.data.data_samplers import build_pretraining_data_loader
+        
+        # Set dataloader type to external
+        args.dataloader_type = 'external'
+        args.num_workers = 0  # For testing purposes
+        
+        # Build the dataloader
+        dataloader = build_pretraining_data_loader(
+            dataset=train_datasets,
+            consumed_samples=64
+        )
+        
+        print("\nTesting build_pretraining_data_loader:")
+        print(f"World Size: {get_data_parallel_world_size()}")
+        print(f"Rank: {get_data_parallel_rank()}")
+        
+        # Get one batch of data
+        for batch_idx, batch in enumerate(dataloader):
+            print(f"\nRank {get_data_parallel_rank()} received batch {batch_idx + 1}:")
+            print(f"Number of samples in batch: {len(batch)}")
+            
+            # Print the first few samples
+            for i, sample in enumerate(batch):
+                print(f"  Sample {i + 1}: dataset={sample[0]}, index={sample[:]}")
+                
+            # Only print first batch
+            break
+
 if __name__ == "__main__":
-    test_builder()
+    # test_builder()
+    test_build_stratified_dataloader()
