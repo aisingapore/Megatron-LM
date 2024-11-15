@@ -85,6 +85,12 @@ Dataset 0: /tmp/tmptxzol9u5/0/test.npy
 Dataset 9: /tmp/tmptxzol9u5/9/test.npy
 """
 
+@pytest.fixture(autouse=True)
+def cleanup_distributed():
+    yield
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
+
 def test_builder():
     if torch.distributed.is_available():
         Utils.initialize_distributed()
@@ -520,7 +526,7 @@ def test_builder():
         # Verify the results
         assert len(batch_items) == len(test_batch_indices)
         for item in batch_items:
-            print(f"Item: {item}")
+            # print(f"Item: {item}")
 
             assert isinstance(item, dict)
             assert 'text' in item
@@ -531,6 +537,59 @@ def test_builder():
         with pytest.raises(KeyError, match="Dataset with prefix 'invalid_prefix' not found"):
             stratified_dataset.__getitems__(invalid_indices)
 
+        # Test MegatronPretrainingStratifiedSampler, which takes the "dataset_with_weight" as input, and returns a sampler
+        # which yields micro batches of sample indices that are (prefix, index) tuples
+        # the samples within each global batch also follows the exact weights defined in the "dataset_with_weight"
+        from megatron.legacy.data.data_samplers import MegatronPretrainingStratifiedSampler
+
+        # Initialize and create sampler
+        sampler = MegatronPretrainingStratifiedSampler(
+            dataset_with_weight=train_datasets,
+            global_batch_size=32,
+            micro_batch_size=8,
+            consumed_samples=0,
+            data_parallel_rank=torch.distributed.get_rank(),
+            data_parallel_size=torch.distributed.get_world_size()
+        )
+       
+        # Check samples per dataset
+        total_samples_in_global_batch = sum(sampler.dataset_num_samples.values())
+
+        # Assert statements to check if all global batch size equals total samples in global batch
+        assert total_samples_in_global_batch == sampler.global_batch_size, (
+            f"Total samples in global batch ({total_samples_in_global_batch}) "
+            f"does not equal global batch size ({sampler.global_batch_size})"
+        )
+
+        for prefix, num_samples in sampler.dataset_num_samples.items():
+            expected_num_samples = round(sampler.global_batch_size * train_datasets[prefix]['weight'])
+            assert abs(num_samples - expected_num_samples) < 2, (
+                f"Number of samples in {prefix} ({num_samples}) does not closely match "
+                f"global batch size ({sampler.global_batch_size}) * weight ({train_datasets[prefix]['weight']})"
+            )
+            # print(f"{prefix}: {num_samples} (expected: {expected_num_samples})")
+
+        global_batch_indices = sampler.__collate_global_batch__()
+        # print("Global batch indices:")
+        # for index in global_batch_indices:
+        #     print(index)
+
+        # Test iteration
+        iterator = iter(sampler)
+        
+        # Iterate over all micro batches inside one global batch
+        for micro_batch_number, micro_batch_indices in enumerate(iterator):
+            print(f"\nMicro Batch {micro_batch_number + 1}:")
+            print(f"Micro Batch size: {len(micro_batch_indices)} (should be {sampler.micro_batch_size})")
+            print(f"Rank: {sampler.data_parallel_rank} Sample of indices:")
+            for sample_id_in_micro_batch, (prefix, idx) in enumerate(micro_batch_indices):
+                print(f"  {sample_id_in_micro_batch}: Dataset: {prefix}, Index: {idx}")
+                # Verify we can actually get this item
+                item = sampler.dataset_with_weight[prefix]['dataset'][idx]
+                # print(f"  Retrieved item type: {type(item)}")
+            # only show the first global batch
+            if (micro_batch_number + 1) * sampler.micro_batch_size * sampler.data_parallel_size >= sampler.global_batch_size:
+                break
 
 if __name__ == "__main__":
     test_builder()

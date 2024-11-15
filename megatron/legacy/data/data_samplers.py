@@ -210,7 +210,7 @@ class MegatronPretrainingStratifiedSampler:
     
     def __init__(
         self,
-        dataset_with_weight: dict,  # Dict of {prefix: {'weight': float, 'total_samples': int, 'dataset': MegatronDataset}}
+        dataset_with_weight: dict,  # Dict of {prefix: {'weight': float, 'dataset': MegatronDataset}}
         global_batch_size: int,
         micro_batch_size: int,
         consumed_samples: int,
@@ -222,9 +222,9 @@ class MegatronPretrainingStratifiedSampler:
         for key, value in dataset_with_weight.items():
             assert isinstance(key, str), "Each key in dataset_with_weight must be a string"
             assert isinstance(value, dict), "Each value in dataset_with_weight must be a dictionary"
-            assert 'weight' in value and 'total_samples' in value, "Each dictionary in dataset_with_weight must contain 'weight' and 'total_samples' keys"
+            assert 'weight' in value, "Each dictionary in dataset_with_weight must contain 'weight' key"
             assert isinstance(value['weight'], float), "'weight' must be a float"
-            assert isinstance(value['total_samples'], int), "'total_samples' must be an integer"
+            assert 'dataset' in value, "Each dictionary in dataset_with_weight must contain 'dataset' key"
 
         self.dataset_with_weight = dataset_with_weight
         self.global_batch_size = global_batch_size
@@ -237,31 +237,38 @@ class MegatronPretrainingStratifiedSampler:
         total_weight = sum(info['weight'] for info in dataset_with_weight.values())
         assert abs(total_weight - 1.0) < 1e-6, f"weights must sum to 1, got {total_weight}"
         
-        # Calculate samples per dataset in the global batch
+        # Assert that the global_batch_size is divisible by (micro_batch_size * data_parallel_size)
+        assert global_batch_size % (micro_batch_size * data_parallel_size) == 0, (
+            f"global_batch_size ({global_batch_size}) must be divisible by "
+            f"micro_batch_size ({micro_batch_size}) * data_parallel_size ({data_parallel_size})"
+        )
+        
+        # Calculate samples per dataset in the global batch using round
         self.dataset_num_samples = {
-            prefix: int(global_batch_size * info['weight'])
+            prefix: round(global_batch_size * info['weight'])
             for prefix, info in dataset_with_weight.items()
         }
         
         # Adjust rounding errors
         total_samples = sum(self.dataset_num_samples.values())
-        if total_samples < global_batch_size:
-            # Add remaining samples to largest weight dataset
-            # Find dataset with highest weight
+        if total_samples != global_batch_size:
+            # Calculate the difference
+            difference = global_batch_size - total_samples
+            
+            # Adjust the dataset with the largest weight
             max_weight = 0
             max_prop_dataset = None
             for dataset, info in dataset_with_weight.items():
                 if info['weight'] > max_weight:
                     max_weight = info['weight']
                     max_prop_dataset = dataset
-            self.dataset_num_samples[max_prop_dataset] += global_batch_size - total_samples
             
-        # Verify total samples equals GBS
-        assert sum(self.dataset_num_samples.values()) == global_batch_size, \
-            "Sum of samples per dataset must equal global batch size"
+            # Adjust the number of samples for the largest weight dataset
+            self.dataset_num_samples[max_prop_dataset] += difference
 
     def __len__(self):
-        return sum(info['total_samples'] for info in self.dataset_with_weight.values())
+        # Sum the lengths of all datasets
+        return sum(len(info['dataset']) for info in self.dataset_with_weight.values())
 
     def __collate_global_batch__(self):
         """Collates samples from all datasets into a global batch.
@@ -274,7 +281,7 @@ class MegatronPretrainingStratifiedSampler:
         # For each dataset, generate its portion of samples for the global batch
         for prefix, info in self.dataset_with_weight.items():
             num_samples = self.dataset_num_samples[prefix]
-            total_samples_local = info['total_samples']
+            total_samples_local = len(info['dataset'])  # Get the length of the dataset
             weight_local = info['weight']
             
             # Calculate local consumed samples and epoch
@@ -283,14 +290,22 @@ class MegatronPretrainingStratifiedSampler:
             bucket_offset_local = consumed_samples_local % total_samples_local
             
             # Generate random permutation for this dataset
-            g = torch.Generator()
-            g.manual_seed(epoch_local)
+            g_local = torch.Generator()
+            g_local.manual_seed(epoch_local)
             
             # Generate indices for this dataset's portion
-            indices = torch.randperm(total_samples_local, generator=g).tolist()[bucket_offset_local:]
+            indices = torch.randperm(total_samples_local, generator=g_local).tolist()[bucket_offset_local:]
             
             # Add (dataset, index) tuples to global batch
             global_batch_indices.extend([(prefix, idx) for idx in indices[:num_samples]])
+
+        # Permute the global_batch_indices according to the epoch_global
+        effective_length = (self.__len__() // self.global_batch_size) * self.global_batch_size
+        epoch_global = self.consumed_samples // effective_length
+        g_global = torch.Generator()
+        g_global.manual_seed(epoch_global)
+        permuted_indices = torch.randperm(len(global_batch_indices), generator=g_global).tolist()
+        global_batch_indices = [global_batch_indices[i] for i in permuted_indices]
             
         return global_batch_indices
 
@@ -298,11 +313,25 @@ class MegatronPretrainingStratifiedSampler:
         while True:
             # Get collated global batch
             global_batch_indices = self.__collate_global_batch__()
+            # print(f"{self.data_parallel_rank}: global_batch_indices regenerated")
             
-            # Distribute the list of indices of each MBS to each data parallel rank
-            start_idx = self.data_parallel_rank
-            end_idx = start_idx + self.micro_batch_size
-            yield global_batch_indices[start_idx:end_idx]
+            # Calculate the number of micro-batches in the global batch
+            num_micro_batches = self.global_batch_size // self.micro_batch_size
+            num_micro_batches_per_rank = num_micro_batches // self.data_parallel_size
+            # print(f"{self.data_parallel_rank}: num_micro_batches = {self.global_batch_size} // {self.micro_batch_size} = {num_micro_batches}")
             
+            # Interleave indices for each rank
+            for i in range(num_micro_batches_per_rank):
+                # Calculate the starting index for this rank
+                start_idx = self.data_parallel_rank + i * (self.data_parallel_size * self.micro_batch_size)
+                # Collect indices for this rank's global-batch
+                print(f"Slicing of rank_indices: {list(range(start_idx, self.global_batch_size, self.data_parallel_size))}")
+                rank_indices = global_batch_indices[start_idx:self.global_batch_size:self.data_parallel_size]
+                # Collect indices for this rank's micro-batch
+                micro_batch_indices=rank_indices[:self.micro_batch_size]
+                # print(f"{self.data_parallel_rank}: micro_batch_indices = {micro_batch_indices}")
+                
+                yield micro_batch_indices
+            
+            # Update consumed samples
             self.consumed_samples += self.global_batch_size
-
