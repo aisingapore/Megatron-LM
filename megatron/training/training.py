@@ -1720,7 +1720,7 @@ def build_train_valid_test_data_iterators(
             return iter(cyclic_iter(dataloader))
         elif dataloader_type == "external":
             # External dataloader is passed through. User is expected to define how to iterate.
-            return dataloader
+            return iter(cyclic_iter(dataloader))
         else:
             raise RuntimeError("unexpected dataloader type")
 
